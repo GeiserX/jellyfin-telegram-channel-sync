@@ -13,7 +13,9 @@ jellyfin_api_key = os.getenv('JELLYFIN_API_KEY')
 
 interval = int(os.getenv('SCRIPT_INTERVAL', '3600'))
 
-csv_file = 'users.csv'
+# New CSV and session location
+csv_file = '/app/data/users.csv'    
+telegram_session_file = '/app/data/session_name'
 
 jf_headers = {'X-Emby-Token': jellyfin_api_key}
 
@@ -33,7 +35,7 @@ def set_jellyfin_user_enabled(user_id, username, enabled_state):
         print(f"Error setting '{username}': {resp.status_code} {resp.text}")
 
 def fetch_telegram_ids():
-    client = TelegramClient('session_name', api_id, api_hash)
+    client = TelegramClient(telegram_session_file, api_id, api_hash)
     client.start()
     participants = client.get_participants(channel_username, aggressive=True)
     telegram_ids = {str(user.id) for user in participants}
@@ -50,7 +52,6 @@ def initialize_csv(jellyfin_users):
 def main():
     jellyfin_users = get_jellyfin_users()
 
-    # Load or initialize CSV
     if not os.path.exists(csv_file):
         print("CSV doesn't exist. Creating new one.")
         df = initialize_csv(jellyfin_users)
@@ -58,7 +59,6 @@ def main():
         df = pd.read_csv(csv_file, dtype={'ID': str, 'JellyfinUser': str, 'Enabled': bool})
         print("Loaded CSV.")
 
-        # Add new jellyfin users to CSV if not present yet
         csv_usernames = set(df['JellyfinUser'])
         new_entries = []
         for name, info in jellyfin_users.items():
@@ -81,7 +81,7 @@ def main():
         known_telegram_ids.update(csv_ids)
 
         if not csv_ids:
-            continue  # Skip if no Telegram IDs assigned yet
+            continue
 
         user_present_in_channel = bool(csv_ids & telegram_ids_present)
         if row['Enabled'] != user_present_in_channel:
