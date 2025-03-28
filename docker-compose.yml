@@ -16,6 +16,6 @@ services:
       - SCRIPT_INTERVAL=3600
 
     volumes:
-      - /mnt/user/appdata/jellytelegram-sync:/app # users.csv and Telegram session
+      - /mnt/user/appdata/jellytelegram-sync:/app/data # users.csv and Telegram session
 
     restart: unless-stopped
