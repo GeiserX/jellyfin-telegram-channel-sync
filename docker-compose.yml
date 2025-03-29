@@ -1,6 +1,6 @@
 services:
   jellytelegram-sync:
-    image: drumsergio/jellytelegram-sync:0.0.1
+    image: drumsergio/jellytelegram-sync:0.0.10
     container_name: jellytelegram-sync
     environment:
       # Telegram variables
