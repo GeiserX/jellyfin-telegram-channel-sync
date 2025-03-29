@@ -1,5 +1,8 @@
 FROM python:3.13-slim
 
+# Environment variable for logging
+ENV PYTHONUNBUFFERED=1
+
 # Set working directory
 WORKDIR /app
 
