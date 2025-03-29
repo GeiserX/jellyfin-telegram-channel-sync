@@ -7,7 +7,8 @@ services:
       - TELEGRAM_API_ID=your_telegram_api_id
       - TELEGRAM_API_HASH=your_telegram_api_hash
       - TELEGRAM_CHANNEL=username_or_channel_id
-      
+      - THRESHOLD_ENTRIES=100 # If returned entries are lower than this value, discard disabling users
+
       # Jellyfin variables
       - JELLYFIN_URL=http://your_jellyfin_url:8096
       - JELLYFIN_API_KEY=your_jellyfin_api_key
