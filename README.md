@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/LICENSE"><img src="https://img.shields.io/github/license/GeiserX/jellyfin-telegram-channel-sync?color=6B4C9A" alt="License"></a>
-  <a href="https://hub.docker.com/r/drumsergio/jellytelegram-sync"><img src="https://img.shields.io/docker/pulls/drumsergio/jellytelegram-sync?color=0088CC" alt="Docker Pulls"></a>
-  <a href="https://hub.docker.com/r/drumsergio/jellytelegram-sync"><img src="https://img.shields.io/docker/image-size/drumsergio/jellytelegram-sync/latest?color=6B4C9A" alt="Docker Image Size"></a>
-  <img src="https://img.shields.io/badge/python-3.13-0088CC" alt="Python 3.13">
+  <a href="https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/LICENSE"><img src="https://img.shields.io/github/license/GeiserX/jellyfin-telegram-channel-sync?style=flat-square&color=6B4C9A" alt="License"></a>
+  <a href="https://hub.docker.com/r/drumsergio/jellytelegram-sync"><img src="https://img.shields.io/docker/pulls/drumsergio/jellytelegram-sync?style=flat-square&logo=docker&color=0088CC" alt="Docker Pulls"></a>
+  <a href="https://hub.docker.com/r/drumsergio/jellytelegram-sync"><img src="https://img.shields.io/docker/image-size/drumsergio/jellytelegram-sync/latest?style=flat-square&color=6B4C9A" alt="Docker Image Size"></a>
+  <img src="https://img.shields.io/badge/python-3.13-0088CC?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
 </p>
 
 ---
