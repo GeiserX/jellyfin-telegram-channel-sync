@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 200" width="900" height="200">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="0%">
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#6B4C9A"/>
-      <stop offset="100%" stop-color="#0088CC"/>
+      <stop offset="100%" stop-color="#0D1B2A"/>
     </linearGradient>
-    <linearGradient id="iconGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="shieldFill" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#ffffff" stop-opacity="0.2"/>
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0.05"/>
     </linearGradient>
@@ -13,48 +13,55 @@
   <!-- Background -->
   <rect width="900" height="200" rx="12" fill="url(#bg)"/>
 
-  <!-- Subtle diagonal lines -->
-  <g opacity="0.03">
-    <line x1="0" y1="0" x2="200" y2="200" stroke="#fff" stroke-width="1"/>
-    <line x1="100" y1="0" x2="300" y2="200" stroke="#fff" stroke-width="1"/>
-    <line x1="200" y1="0" x2="400" y2="200" stroke="#fff" stroke-width="1"/>
-    <line x1="300" y1="0" x2="500" y2="200" stroke="#fff" stroke-width="1"/>
-    <line x1="400" y1="0" x2="600" y2="200" stroke="#fff" stroke-width="1"/>
-    <line x1="500" y1="0" x2="700" y2="200" stroke="#fff" stroke-width="1"/>
-    <line x1="600" y1="0" x2="800" y2="200" stroke="#fff" stroke-width="1"/>
-    <line x1="700" y1="0" x2="900" y2="200" stroke="#fff" stroke-width="1"/>
+  <!-- Subtle grid -->
+  <g stroke="#ffffff" stroke-opacity="0.04" stroke-width="1">
+    <line x1="0" y1="50" x2="900" y2="50"/>
+    <line x1="0" y1="100" x2="900" y2="100"/>
+    <line x1="0" y1="150" x2="900" y2="150"/>
+    <line x1="150" y1="0" x2="150" y2="200"/>
+    <line x1="300" y1="0" x2="300" y2="200"/>
+    <line x1="450" y1="0" x2="450" y2="200"/>
+    <line x1="600" y1="0" x2="600" y2="200"/>
+    <line x1="750" y1="0" x2="750" y2="200"/>
   </g>
 
-  <!-- Jellyfin logo shape (left) -->
-  <g transform="translate(70, 100)">
-    <circle cx="0" cy="0" r="38" fill="url(#iconGlow)" stroke="#ffffff" stroke-width="2.5" opacity="0.9"/>
-    <!-- Play button triangle inside -->
-    <polygon points="-12,-18 22,0 -12,18" fill="#ffffff" opacity="0.85"/>
+  <!-- Shield icon with checkmark (access control concept) -->
+  <g transform="translate(100, 100)">
+    <!-- Shield shape -->
+    <path d="M0,-48 L40,-32 L40,8 C40,36 20,52 0,60 C-20,52 -40,36 -40,8 L-40,-32 Z"
+          fill="url(#shieldFill)" stroke="#ffffff" stroke-width="2.5" opacity="0.9"/>
+    <!-- Checkmark inside shield -->
+    <polyline points="-14,4 -4,16 18,-12" fill="none" stroke="#ffffff" stroke-width="4"
+              stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
   </g>
 
-  <!-- Sync arrows connecting -->
-  <g transform="translate(130, 100)" opacity="0.7">
-    <line x1="0" y1="-6" x2="36" y2="-6" stroke="#ffffff" stroke-width="2"/>
-    <polygon points="36,-12 46,-6 36,0" fill="#ffffff"/>
-    <line x1="46" y1="6" x2="10" y2="6" stroke="#ffffff" stroke-width="2"/>
-    <polygon points="10,0 0,6 10,12" fill="#ffffff"/>
-  </g>
-
-  <!-- Telegram circle (right) -->
-  <g transform="translate(205, 100)">
-    <circle cx="0" cy="0" r="32" fill="url(#iconGlow)" stroke="#ffffff" stroke-width="2.5" opacity="0.9"/>
-    <!-- Simplified paper plane -->
-    <path d="M-16,2 L16,-10 L2,14 Z" fill="#ffffff" opacity="0.85"/>
-    <path d="M16,-10 L0,2 L2,14" fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.6"/>
+  <!-- Three user dots (channel members) stacked vertically on right side -->
+  <g transform="translate(790, 50)">
+    <!-- User 1 -->
+    <circle cx="0" cy="0" r="8" fill="#ffffff" opacity="0.3"/>
+    <circle cx="0" cy="-14" r="5" fill="#ffffff" opacity="0.3"/>
+    <!-- User 2 -->
+    <circle cx="35" cy="20" r="8" fill="#ffffff" opacity="0.2"/>
+    <circle cx="35" cy="6" r="5" fill="#ffffff" opacity="0.2"/>
+    <!-- User 3 -->
+    <circle cx="10" cy="50" r="8" fill="#ffffff" opacity="0.15"/>
+    <circle cx="10" cy="36" r="5" fill="#ffffff" opacity="0.15"/>
+    <!-- User 4 -->
+    <circle cx="50" cy="65" r="8" fill="#ffffff" opacity="0.1"/>
+    <circle cx="50" cy="51" r="5" fill="#ffffff" opacity="0.1"/>
+    <!-- Connecting lines -->
+    <line x1="0" y1="10" x2="35" y2="12" stroke="#ffffff" stroke-width="1" opacity="0.1"/>
+    <line x1="35" y1="30" x2="10" y2="42" stroke="#ffffff" stroke-width="1" opacity="0.08"/>
+    <line x1="10" y1="60" x2="50" y2="57" stroke="#ffffff" stroke-width="1" opacity="0.06"/>
   </g>
 
   <!-- Title text -->
-  <text x="270" y="92" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="30" font-weight="700" fill="#ffffff" letter-spacing="0.5">
+  <text x="190" y="92" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="36" font-weight="700" fill="#ffffff" letter-spacing="-0.5">
     jellyfin-telegram-channel-sync
   </text>
 
   <!-- Subtitle -->
-  <text x="270" y="124" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="15" fill="#ffffff" opacity="0.7" letter-spacing="0.3">
+  <text x="192" y="126" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="16" fill="#ffffff" opacity="0.65" letter-spacing="0.3">
     Automated Jellyfin access control via Telegram membership
   </text>
 </svg>
