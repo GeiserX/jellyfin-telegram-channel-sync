@@ -150,6 +150,20 @@ Each sync cycle follows this sequence:
 | Jellyfin API errors (401/403) | Invalid or expired API key | Regenerate the API key in Jellyfin admin panel |
 | `root` user not appearing | Filtered out by design | The `root` admin account is always excluded from sync |
 
+## Other Jellyfin Projects by GeiserX
+
+- [smart-covers](https://github.com/GeiserX/smart-covers) — Plugin for fallback cover extraction from PDF, EPUB, and audiobooks
+- [whisper-subs](https://github.com/GeiserX/whisper-subs) — Plugin for local AI-powered subtitle generation using Whisper
+- [jellyfin-quality-gate](https://github.com/GeiserX/jellyfin-quality-gate) — Plugin to restrict users to specific media versions
+- [jellyfin-encoder](https://github.com/GeiserX/jellyfin-encoder) — Automatic 720p HEVC/AV1 transcoding service
+
+## Other Telegram Projects by GeiserX
+
+- [paperless-telegram-bot](https://github.com/GeiserX/paperless-telegram-bot) — Manage Paperless-NGX documents through Telegram
+- [AskePub](https://github.com/GeiserX/AskePub) — Telegram bot for ePub annotation with GPT-4
+- [telegram-delay-channel-cloner](https://github.com/GeiserX/telegram-delay-channel-cloner) — Relay messages between channels with delay
+- [telegram-slskd-local-bot](https://github.com/GeiserX/telegram-slskd-local-bot) — Automated music discovery and download via Telegram
+
 ## License
 
 This project is licensed under the [GNU Lesser General Public License v2.1](LICENSE).
