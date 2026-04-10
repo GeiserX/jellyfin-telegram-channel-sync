@@ -152,9 +152,9 @@ Each sync cycle follows this sequence:
 
 ## Other Jellyfin Projects by GeiserX
 
-- [smart-covers](https://github.com/GeiserX/smart-covers) — Plugin for fallback cover extraction from PDF, EPUB, and audiobooks
-- [whisper-subs](https://github.com/GeiserX/whisper-subs) — Plugin for local AI-powered subtitle generation using Whisper
-- [jellyfin-quality-gate](https://github.com/GeiserX/jellyfin-quality-gate) — Plugin to restrict users to specific media versions
+- [quality-gate](https://github.com/GeiserX/quality-gate) — Restrict users to specific media versions based on configurable path-based policies
+- [smart-covers](https://github.com/GeiserX/smart-covers) — Cover extraction for books, audiobooks, comics, magazines, and music libraries with online fallback
+- [whisper-subs](https://github.com/GeiserX/whisper-subs) — Automatically generates subtitles using local AI models powered by Whisper
 - [jellyfin-encoder](https://github.com/GeiserX/jellyfin-encoder) — Automatic 720p HEVC/AV1 transcoding service
 
 ## Other Telegram Projects by GeiserX
