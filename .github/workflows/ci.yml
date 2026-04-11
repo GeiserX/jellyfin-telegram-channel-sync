@@ -1,0 +1,27 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r app/requirements.txt && pip install pytest pytest-cov
+      - run: pytest --cov --cov-report=xml -v
+        env:
+          TELEGRAM_API_ID: "12345"
+          TELEGRAM_API_HASH: "fakehash"
+          TELEGRAM_CHANNEL: "-1001234567890"
+          THRESHOLD_ENTRIES: "5"
+          JELLYFIN_URL: "http://localhost:8096"
+          JELLYFIN_API_KEY: "fakekey"
+      - uses: codecov/codecov-action@v5
+        if: github.event_name == 'push'
+        with:
+          fail_ci_if_error: false
