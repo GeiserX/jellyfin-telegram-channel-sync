@@ -165,6 +165,15 @@ Each sync cycle follows this sequence:
 - [telegram-delay-channel-cloner](https://github.com/GeiserX/telegram-delay-channel-cloner) — Relay messages between channels with delay
 - [telegram-slskd-local-bot](https://github.com/GeiserX/telegram-slskd-local-bot) — Automated music discovery and download via Telegram
 
+
+## Related Projects
+
+| Project | Description |
+|---------|-------------|
+| [jellyfin-encoder](https://github.com/GeiserX/jellyfin-encoder) | Automatic 720p HEVC/AV1 transcoding service for Jellyfin with hardware acceleration |
+| [smart-covers](https://github.com/GeiserX/smart-covers) | Jellyfin plugin for fallback cover extraction from PDF, EPUB, and audiobook files |
+| [whisper-subs](https://github.com/GeiserX/whisper-subs) | Jellyfin plugin for local AI-powered subtitle generation using Whisper |
+
 ## License
 
 This project is licensed under the [GNU Lesser General Public License v2.1](LICENSE).
