@@ -8,6 +8,7 @@
   <a href="https://hub.docker.com/r/drumsergio/jellytelegram-sync"><img src="https://img.shields.io/docker/image-size/drumsergio/jellytelegram-sync/latest?style=flat-square&color=6B4C9A" alt="Docker Image Size"></a>
   <img src="https://img.shields.io/badge/python-3.13-0088CC?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
   <a href="https://codecov.io/gh/GeiserX/jellyfin-telegram-channel-sync"><img src="https://codecov.io/gh/GeiserX/jellyfin-telegram-channel-sync/graph/badge.svg" alt="codecov"></a>
+  <a href="https://github.com/awesome-jellyfin/awesome-jellyfin#readme"><img src="https://img.shields.io/badge/listed%20on-awesome--jellyfin-00a4dc?style=flat-square&logo=jellyfin&logoColor=white" alt="listed on awesome-jellyfin"></a>
 </p>
 
 ---
