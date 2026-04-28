@@ -1,4 +1,4 @@
-# AGENTS.md — Jellyfin Telegram Channel Sync
+# CLAUDE.md — Jellyfin Telegram Channel Sync
 
 ## Project Overview
 
