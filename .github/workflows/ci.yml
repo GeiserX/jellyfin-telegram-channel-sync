@@ -22,7 +22,7 @@ jobs:
           THRESHOLD_ENTRIES: "5"
           JELLYFIN_URL: "http://localhost:8096"
           JELLYFIN_API_KEY: "fakekey"
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         if: github.event_name == 'push'
         with:
           fail_ci_if_error: false
