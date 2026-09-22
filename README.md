@@ -142,7 +142,7 @@ All of these work only in your private chat with the bot, and only for `OWNER_ID
 
 ## Upgrading from 0.x
 
-Keep your data volume and start 1.0.0. On the first run the old `users` table in `jellyfin_users.db` is imported into the new `sync.db`:
+Keep your data volume and start 1.0.0. On the first run the migration imports the old `users` table from `jellyfin_users.db` into the new `sync.db`.
 
 - Each space-separated Telegram id becomes its own link row, so multi-id users survive.
 - A row with `Enabled = 0` is recorded as *disabled by this service*, so those accounts come back on if the person rejoins.
@@ -162,6 +162,7 @@ Everything is one SQLite file, `/app/data/sync.db`, with four tables defined in 
 | `The Telegram user session is not authorized` | The session file is missing or was revoked | Run `python -m app.login` again |
 | `Configuration error: X is required` | A variable is missing | The message names it; the container exits with code 2 |
 | The bot ignores you | You are not `OWNER_ID`, or you wrote in a group | Check `OWNER_ID`, and write in the private chat |
+| No notifications arrive | Telegram will not let a bot message someone who has never written to it | Send the bot `/start` once |
 | Nothing is ever disabled | Dry run is still on | `/status` shows it; `/dryrun off` |
 | `Member list came back below THRESHOLD_ENTRIES` | Telegram returned a partial list, or the threshold is too high | This is the guardrail working. Check the threshold against your real member count. |
 | Someone left but is still enabled | The grace window has not elapsed | `/status` shows how many are waiting; lower `GRACE_HOURS` if you want it sooner |
