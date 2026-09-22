@@ -7,12 +7,41 @@ policy, and it does so by reading the whole policy back first -- see
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
+import re
 from dataclasses import dataclass
 
 import requests
 
 log = logging.getLogger(__name__)
+
+
+# Jellyfin sends .NET timestamps: seven fractional digits and a Z, which
+# datetime.fromisoformat will not take.
+_FRACTION = re.compile(r"\.(\d{1,})")
+
+
+def parse_date(value) -> int | None:
+    """A Jellyfin timestamp as epoch seconds, or None if there is not one.
+
+    Returning None matters: a user with no recorded activity must never be
+    read as a user who was last active in 1970.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = f"{text[:-1]}+00:00"
+    text = _FRACTION.sub(lambda match: "." + match.group(1)[:6], text)
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        log.warning("Could not read the Jellyfin timestamp %r", value)
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return int(parsed.timestamp())
 
 
 @dataclass(frozen=True)
@@ -21,10 +50,28 @@ class JellyfinUser:
     id: str
     disabled: bool
     is_administrator: bool
+    last_used: int | None = None
+
+    @property
+    def last_used_date(self) -> str:
+        """The day the account was last used, for a message to a person."""
+        if self.last_used is None:
+            return "never"
+        return dt.datetime.fromtimestamp(self.last_used, dt.timezone.utc).strftime("%Y-%m-%d")
 
 
 class JellyfinError(Exception):
     pass
+
+
+def _last_used(user: dict) -> int | None:
+    """The more recent of the two timestamps Jellyfin keeps, if either exists."""
+    stamps = [
+        parse_date(user.get("LastActivityDate")),
+        parse_date(user.get("LastLoginDate")),
+    ]
+    known = [stamp for stamp in stamps if stamp is not None]
+    return max(known) if known else None
 
 
 class JellyfinClient:
@@ -58,6 +105,7 @@ class JellyfinClient:
                 id=user["Id"],
                 disabled=bool(user.get("Policy", {}).get("IsDisabled", False)),
                 is_administrator=bool(user.get("Policy", {}).get("IsAdministrator", False)),
+                last_used=_last_used(user),
             )
             for user in self._get("/Users")
         ]

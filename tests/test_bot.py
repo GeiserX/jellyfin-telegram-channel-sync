@@ -20,6 +20,12 @@ class FakeConfig:
     grace_hours: int = 72
     interval: int = 3600
     threshold_entries: int = 100
+    inactive_days: int = 365
+    exempt_users: frozenset = frozenset()
+
+    @property
+    def inactive_seconds(self):
+        return self.inactive_days * 86400
 
 
 class FakeJellyfin:

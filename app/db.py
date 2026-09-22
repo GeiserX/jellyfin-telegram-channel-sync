@@ -10,7 +10,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS links (
@@ -21,9 +21,11 @@ CREATE TABLE IF NOT EXISTS links (
 CREATE INDEX IF NOT EXISTS idx_links_user ON links(jellyfin_user);
 
 CREATE TABLE IF NOT EXISTS user_state (
-    jellyfin_user  TEXT PRIMARY KEY,
-    absent_since   INTEGER,
-    disabled_by_us INTEGER NOT NULL DEFAULT 0
+    jellyfin_user   TEXT PRIMARY KEY,
+    absent_since    INTEGER,
+    disabled_by_us  INTEGER NOT NULL DEFAULT 0,
+    disabled_reason TEXT,
+    inactive_mark   INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS audit (
@@ -42,12 +44,22 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 
+# Why this service disabled an account. Only a LEFT_CHANNEL disable is undone
+# when the person comes back; an INACTIVE one waits for a human.
+LEFT_CHANNEL = "left_channel"
+INACTIVE = "inactive"
+
+
 @dataclass(frozen=True)
 class UserState:
     """What this service remembers about one Jellyfin account."""
 
     absent_since: int | None = None
     disabled_by_us: bool = False
+    disabled_reason: str | None = None
+    # The last-used timestamp the inactivity rule already acted on. It stops
+    # the rule fighting an administrator who re-enables the account by hand.
+    inactive_mark: int | None = None
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -91,13 +103,33 @@ def _legacy_rows(conn: sqlite3.Connection, legacy_path: str | None) -> list[tupl
     return []
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))
+
+
 def migrate(conn: sqlite3.Connection, legacy_path: str | None = None, now: int | None = None) -> int:
     """Create the schema and, on a fresh database, import the old table.
 
     Returns the number of links imported from the legacy table.
     """
     now = int(time.time()) if now is None else now
-    if _version(conn) >= SCHEMA_VERSION:
+    version = _version(conn)
+    if version >= SCHEMA_VERSION:
+        return 0
+
+    if version >= 1:
+        # A 1.x database: the tables are there, the reason column is not.
+        if not _column_exists(conn, "user_state", "disabled_reason"):
+            conn.execute("ALTER TABLE user_state ADD COLUMN disabled_reason TEXT")
+            # Everything 1.x disabled, it disabled for leaving the channel.
+            conn.execute(
+                "UPDATE user_state SET disabled_reason = ? WHERE disabled_by_us = 1",
+                (LEFT_CHANNEL,),
+            )
+        if not _column_exists(conn, "user_state", "inactive_mark"):
+            conn.execute("ALTER TABLE user_state ADD COLUMN inactive_mark INTEGER")
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
         return 0
 
     conn.executescript(_SCHEMA)
@@ -116,9 +148,10 @@ def migrate(conn: sqlite3.Connection, legacy_path: str | None = None, now: int |
             # It was disabled by the old version of this service, so this
             # service owns re-enabling it.
             conn.execute(
-                "INSERT OR REPLACE INTO user_state (jellyfin_user, absent_since, disabled_by_us)"
-                " VALUES (?, ?, 1)",
-                (jellyfin_user, now),
+                "INSERT OR REPLACE INTO user_state"
+                " (jellyfin_user, absent_since, disabled_by_us, disabled_reason, inactive_mark)"
+                " VALUES (?, ?, 1, ?, NULL)",
+                (jellyfin_user, now, LEFT_CHANNEL),
             )
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
@@ -171,17 +204,21 @@ def get_states(conn: sqlite3.Connection) -> dict[str, UserState]:
         row["jellyfin_user"]: UserState(
             absent_since=row["absent_since"],
             disabled_by_us=bool(row["disabled_by_us"]),
+            disabled_reason=row["disabled_reason"],
+            inactive_mark=row["inactive_mark"],
         )
         for row in conn.execute(
-            "SELECT jellyfin_user, absent_since, disabled_by_us FROM user_state"
+            "SELECT jellyfin_user, absent_since, disabled_by_us, disabled_reason, inactive_mark"
+            " FROM user_state"
         )
     }
 
 
 def _upsert_state(conn: sqlite3.Connection, jellyfin_user: str, **fields) -> None:
     conn.execute(
-        "INSERT OR IGNORE INTO user_state (jellyfin_user, absent_since, disabled_by_us)"
-        " VALUES (?, NULL, 0)",
+        "INSERT OR IGNORE INTO user_state"
+        " (jellyfin_user, absent_since, disabled_by_us, disabled_reason, inactive_mark)"
+        " VALUES (?, NULL, 0, NULL, NULL)",
         (jellyfin_user,),
     )
     assignments = ", ".join(f"{key} = ?" for key in fields)
@@ -196,11 +233,22 @@ def set_absent_since(conn: sqlite3.Connection, jellyfin_user: str, when: int | N
     _upsert_state(conn, jellyfin_user, absent_since=when)
 
 
-def set_disabled_by_us(conn: sqlite3.Connection, jellyfin_user: str, owned: bool) -> None:
-    _upsert_state(conn, jellyfin_user, disabled_by_us=int(owned))
+def set_disabled_by_us(
+    conn: sqlite3.Connection, jellyfin_user: str, owned: bool, reason: str | None = None
+) -> None:
+    _upsert_state(
+        conn,
+        jellyfin_user,
+        disabled_by_us=int(owned),
+        disabled_reason=reason if owned else None,
+    )
 
 
 # --- audit ---------------------------------------------------------------
+
+def set_inactive_mark(conn: sqlite3.Connection, jellyfin_user: str, when: int | None) -> None:
+    _upsert_state(conn, jellyfin_user, inactive_mark=when)
+
 
 def record_audit(
     conn: sqlite3.Connection,

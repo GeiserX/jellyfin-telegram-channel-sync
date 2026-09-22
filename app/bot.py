@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -22,6 +23,7 @@ HELP = """Commands (owner only):
 /links - every link, grouped by Jellyfin user
 /unknown - channel members with no link
 /unlinked - enabled Jellyfin users with no link
+/inactive - enabled accounts nobody has used since the threshold
 /status - last sync, counts, dry-run state
 /sync - run a sync cycle now
 /dryrun on|off - whether changes are really applied
@@ -182,6 +184,28 @@ async def _cmd_unlinked(ctx: BotContext, args: list[str]) -> str:
     return f"{len(names)} enabled Jellyfin users with no link:\n" + "\n".join(names)
 
 
+async def _cmd_inactive(ctx: BotContext, args: list[str]) -> str:
+    if not ctx.config.inactive_seconds:
+        return "The inactivity rule is off. Set INACTIVE_DAYS to switch it on."
+    jellyfin_users = await asyncio.to_thread(ctx.jellyfin.users_by_name)
+    past, no_record = sync.inactive_users(
+        jellyfin_users, int(time.time()), ctx.config.inactive_seconds, ctx.config.exempt_users
+    )
+    tail = (
+        f"\n{no_record} enabled accounts have no recorded use, so this rule leaves them alone."
+        if no_record
+        else ""
+    )
+    if not past:
+        return f"No enabled account is more than {ctx.config.inactive_days} days unused.{tail}"
+    lines = [f"{name} - last used {when}" for name, when in past]
+    return (
+        f"{len(past)} enabled accounts unused for {ctx.config.inactive_days} days or more:\n"
+        + "\n".join(lines)
+        + tail
+    )
+
+
 async def _cmd_status(ctx: BotContext, args: list[str]) -> str:
     links = db.get_links(ctx.conn)
     grouped = db.links_by_user(ctx.conn)
@@ -196,11 +220,22 @@ async def _cmd_status(ctx: BotContext, args: list[str]) -> str:
             f"Links: {len(links)} Telegram ids across {len(grouped)} Jellyfin users",
             f"Absent, inside the grace window: {len(waiting)}",
             f"Unanswered membership lookups last cycle: {db.get_setting(ctx.conn, 'last_unknown', '0')}",
+            _inactivity_line(ctx),
             f"Disabled by this service: {len(owned)}",
             f"Dry run: {'on' if dry_run else 'off'}",
             f"Grace: {ctx.config.grace_hours}h, interval: {ctx.config.interval}s,"
             f" threshold: {ctx.config.threshold_entries}",
         ]
+    )
+
+
+def _inactivity_line(ctx: BotContext) -> str:
+    if not ctx.config.inactive_seconds:
+        return "Inactivity rule: off"
+    return (
+        f"Inactivity rule: {ctx.config.inactive_days} days, "
+        f"{db.get_setting(ctx.conn, 'last_inactive', '0')} past the threshold, "
+        f"{db.get_setting(ctx.conn, 'last_no_record', '0')} with no recorded use"
     )
 
 
@@ -230,6 +265,7 @@ COMMANDS = {
     "links": _cmd_links,
     "unknown": _cmd_unknown,
     "unlinked": _cmd_unlinked,
+    "inactive": _cmd_inactive,
     "status": _cmd_status,
     "sync": _cmd_sync,
     "dryrun": _cmd_dryrun,

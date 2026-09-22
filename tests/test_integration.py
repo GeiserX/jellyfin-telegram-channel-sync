@@ -131,6 +131,9 @@ def test_a_real_cycle_disables_an_absent_member_without_losing_their_policy(
         interval = 3600
         threshold_entries = 1
         grace_seconds = GRACE
+        inactive_days = 0
+        inactive_seconds = 0
+        exempt_users = frozenset()
 
     ctx = bot.BotContext(
         conn=conn,
@@ -183,6 +186,9 @@ def test_a_real_cycle_re_enables_a_returning_member(jellyfin_server, tmp_path, m
         interval = 3600
         threshold_entries = 1
         grace_seconds = GRACE
+        inactive_days = 0
+        inactive_seconds = 0
+        exempt_users = frozenset()
 
     ctx = bot.BotContext(
         conn=conn,

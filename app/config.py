@@ -59,6 +59,13 @@ def _bool(env: dict, name: str, default: bool) -> bool:
     raise ConfigError(f"{name} must be a boolean, got {raw!r}")
 
 
+def parse_exempt(raw: str | None) -> frozenset:
+    """Usernames this daemon never touches, matched without regard to case."""
+    if not raw:
+        return frozenset()
+    return frozenset(name.strip().lower() for name in raw.split(",") if name.strip())
+
+
 def parse_channel(raw: str) -> int | str:
     """A channel is either a numeric id or an @username."""
     raw = raw.strip()
@@ -97,6 +104,8 @@ class Config:
     threshold_entries: int
     interval: int
     grace_hours: int
+    inactive_days: int
+    exempt_users: frozenset
     dry_run: bool
     data_dir: str
 
@@ -120,6 +129,11 @@ class Config:
     def grace_seconds(self) -> int:
         return self.grace_hours * 3600
 
+    @property
+    def inactive_seconds(self) -> int:
+        """0 means the inactivity rule is switched off."""
+        return self.inactive_days * 86400
+
 
 def load_config(env: dict | None = None) -> Config:
     env = os.environ if env is None else env
@@ -136,6 +150,9 @@ def load_config(env: dict | None = None) -> Config:
         interval=_int(env, "SCRIPT_INTERVAL", 3600, minimum=1),
         # 0 is allowed: disable on the cycle after the first absence.
         grace_hours=_int(env, "GRACE_HOURS", 72, minimum=0),
+        # 0 switches the inactivity rule off entirely.
+        inactive_days=_int(env, "INACTIVE_DAYS", 365, minimum=0),
+        exempt_users=parse_exempt(env.get("EXEMPT_USERS")),
         dry_run=_bool(env, "DRY_RUN", True),
         data_dir=(env.get("DATA_DIR") or DEFAULT_DATA_DIR).rstrip("/") or "/",
     )

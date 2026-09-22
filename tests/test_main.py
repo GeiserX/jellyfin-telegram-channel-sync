@@ -19,10 +19,16 @@ class FakeConfig:
     grace_hours: int = 72
     interval: int = 0
     threshold_entries: int = 1
+    inactive_days: int = 0  # the inactivity rule is off unless a test wants it
+    exempt_users: frozenset = frozenset()
 
     @property
     def grace_seconds(self):
         return self.grace_hours * 3600
+
+    @property
+    def inactive_seconds(self):
+        return self.inactive_days * 86400
 
 
 class FakeJellyfin:

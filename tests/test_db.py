@@ -307,7 +307,10 @@ def test_ownership_is_claimed_before_the_jellyfin_call(conn, monkeypatch):
     real_set = db.set_disabled_by_us
     monkeypatch.setattr(
         sync.db, "set_disabled_by_us",
-        lambda conn_, user, owned: (order.append(f"claim={owned}"), real_set(conn_, user, owned))[1],
+        lambda conn_, user, owned, reason=None: (
+            order.append(f"claim={owned}"),
+            real_set(conn_, user, owned, reason),
+        )[1],
     )
 
     class Recording(FakeJellyfin):
