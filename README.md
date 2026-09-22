@@ -51,7 +51,7 @@ Both sessions are files in `/app/data`, created once by [app/login.py](app/login
 ```yaml
 services:
   jellytelegram-sync:
-    image: drumsergio/jellyfin-telegram-channel-sync:1.0.0
+    image: drumsergio/jellyfin-telegram-channel-sync:1.1.0
     container_name: jellytelegram-sync
     environment:
       - TELEGRAM_API_ID=your_telegram_api_id
@@ -142,7 +142,7 @@ All of these work only in your private chat with the bot, and only for `OWNER_ID
 
 ## Upgrading from 0.x
 
-Keep your data volume and start 1.0.0. On the first run the migration imports the old `users` table from `jellyfin_users.db` into the new `sync.db`.
+Keep your data volume and start 1.1.0. On the first run the migration imports the old `users` table from `jellyfin_users.db` into the new `sync.db`.
 
 - Each space-separated Telegram id becomes its own link row, so multi-id users survive.
 - A row with `Enabled = 0` is recorded as *disabled by this service*, so those accounts come back on if the person rejoins.
