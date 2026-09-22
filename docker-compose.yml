@@ -26,6 +26,6 @@ services:
       - DRY_RUN=true
 
     volumes:
-      - /mnt/user/appdata/jellytelegram-sync:/app/data # database and Telegram sessions
+      - ./data:/app/data # database and both Telegram session files
 
     restart: unless-stopped
