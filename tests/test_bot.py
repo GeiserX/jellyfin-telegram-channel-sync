@@ -319,3 +319,49 @@ def test_help_lists_every_command(ctx):
     for command in ["/link", "/unlink", "/links", "/unknown", "/unlinked", "/status", "/sync", "/dryrun"]:
         assert command in reply
     assert say(ctx, "/start") == reply
+
+
+# --- reports longer than Telegram will accept -----------------------------
+
+def test_a_short_report_is_one_message():
+    assert bot.chunk_message("one line") == ["one line"]
+
+
+def test_a_long_report_is_split_at_line_boundaries():
+    lines = [f"{700000000 + index} - Example {index}" for index in range(400)]
+    text = "\n".join(lines)
+    assert len(text) > bot.MESSAGE_LIMIT
+
+    parts = bot.chunk_message(text)
+
+    assert len(parts) > 1
+    assert all(len(part) <= bot.MESSAGE_LIMIT for part in parts)
+    assert "\n".join(parts) == text  # nothing lost, nothing duplicated
+    assert all(not part.startswith("\n") for part in parts)
+
+
+def test_a_single_line_longer_than_the_limit_is_still_sent():
+    text = "x" * (bot.MESSAGE_LIMIT * 2 + 5)
+    parts = bot.chunk_message(text)
+    assert all(len(part) <= bot.MESSAGE_LIMIT for part in parts)
+    assert "".join(parts) == text
+
+
+def test_an_oversized_line_after_a_normal_one_does_not_swallow_it():
+    text = "short first line\n" + "x" * (bot.MESSAGE_LIMIT + 10)
+    parts = bot.chunk_message(text)
+    assert parts[0] == "short first line"
+    assert all(len(part) <= bot.MESSAGE_LIMIT for part in parts)
+    assert "".join(parts[1:]) == "x" * (bot.MESSAGE_LIMIT + 10)
+
+
+def test_the_owner_receives_every_part_of_a_long_report(ctx):
+    for index in range(400):
+        db.add_link(ctx.conn, str(700000000 + index), f"exampleuser{index}")
+    event = FakeEvent("/links")
+
+    asyncio.run(bot.on_message(ctx, event))
+
+    assert len(event.replies) > 1
+    assert all(len(reply) <= bot.MESSAGE_LIMIT for reply in event.replies)
+    assert "exampleuser399" in "\n".join(event.replies)

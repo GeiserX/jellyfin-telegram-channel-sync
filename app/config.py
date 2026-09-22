@@ -32,16 +32,20 @@ def _required(env: dict, name: str) -> str:
     return value
 
 
-def _int(env: dict, name: str, default: int | None = None) -> int:
+def _int(env: dict, name: str, default: int | None = None, minimum: int | None = None) -> int:
     raw = (env.get(name) or "").strip()
     if not raw:
         if default is None:
             raise ConfigError(f"{name} is required")
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        raise ConfigError(f"{name} must be an integer, got {raw!r}") from None
+        value = default
+    else:
+        try:
+            value = int(raw)
+        except ValueError:
+            raise ConfigError(f"{name} must be an integer, got {raw!r}") from None
+    if minimum is not None and value < minimum:
+        raise ConfigError(f"{name} must be {minimum} or more, got {value}")
+    return value
 
 
 def _bool(env: dict, name: str, default: bool) -> bool:
@@ -127,9 +131,11 @@ def load_config(env: dict | None = None) -> Config:
         owner_id=_int(env, "OWNER_ID"),
         jellyfin_url=_required(env, "JELLYFIN_URL").rstrip("/"),
         jellyfin_api_key=_required(env, "JELLYFIN_API_KEY"),
-        threshold_entries=_int(env, "THRESHOLD_ENTRIES"),
-        interval=_int(env, "SCRIPT_INTERVAL", 3600),
-        grace_hours=_int(env, "GRACE_HOURS", 72),
+        # 0 would let an empty member list through and disable everybody.
+        threshold_entries=_int(env, "THRESHOLD_ENTRIES", minimum=1),
+        interval=_int(env, "SCRIPT_INTERVAL", 3600, minimum=1),
+        # 0 is allowed: disable on the cycle after the first absence.
+        grace_hours=_int(env, "GRACE_HOURS", 72, minimum=0),
         dry_run=_bool(env, "DRY_RUN", True),
         data_dir=(env.get("DATA_DIR") or DEFAULT_DATA_DIR).rstrip("/") or "/",
     )

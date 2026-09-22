@@ -1,5 +1,6 @@
 """Schema, the migration from the pre-1.0 table, and applying actions."""
 
+import asyncio
 import sqlite3
 
 import pytest
@@ -190,18 +191,25 @@ def test_get_setting_default(conn):
 # --- applying actions ----------------------------------------------------
 
 class FakeJellyfin:
-    def __init__(self):
+    def __init__(self, fail=False):
         self.calls = []
+        self.fail = fail
 
     def set_user_disabled(self, user_id, disabled):
+        if self.fail:
+            raise RuntimeError("Jellyfin is unreachable")
         self.calls.append((user_id, disabled))
+
+
+def apply(conn, jellyfin, action, dry_run, now):
+    return asyncio.run(sync.apply_action(conn, jellyfin, action, dry_run, now))
 
 
 def test_applying_a_disable_writes_jellyfin_and_takes_ownership(conn):
     jellyfin = FakeJellyfin()
     action = sync.Action(sync.DISABLE, "examplealpha", "jf-1", notify="x", detail="grace elapsed")
 
-    sync.apply_action(conn, jellyfin, action, dry_run=False, now=NOW)
+    apply(conn, jellyfin, action, dry_run=False, now=NOW)
 
     assert jellyfin.calls == [("jf-1", True)]
     assert db.get_states(conn)["examplealpha"].disabled_by_us is True
@@ -213,7 +221,7 @@ def test_a_dry_run_disable_changes_nothing_in_jellyfin(conn):
     jellyfin = FakeJellyfin()
     action = sync.Action(sync.DISABLE, "examplealpha", "jf-1")
 
-    sync.apply_action(conn, jellyfin, action, dry_run=True, now=NOW)
+    apply(conn, jellyfin, action, dry_run=True, now=NOW)
 
     assert jellyfin.calls == []
     assert db.get_states(conn) == {}
@@ -225,7 +233,7 @@ def test_applying_an_enable_releases_ownership_and_clears_the_clock(conn):
     db.set_disabled_by_us(conn, "examplealpha", True)
     jellyfin = FakeJellyfin()
 
-    sync.apply_action(conn, jellyfin, sync.Action(sync.ENABLE, "examplealpha", "jf-1"), False, NOW)
+    apply(conn, jellyfin, sync.Action(sync.ENABLE, "examplealpha", "jf-1"), False, NOW)
 
     assert jellyfin.calls == [("jf-1", False)]
     assert db.get_states(conn)["examplealpha"] == db.UserState(absent_since=None, disabled_by_us=False)
@@ -235,17 +243,17 @@ def test_absence_bookkeeping_still_runs_in_a_dry_run(conn):
     # Otherwise a dry run could never reach the end of the grace window, and
     # the "would be disabled" message would never arrive.
     jellyfin = FakeJellyfin()
-    sync.apply_action(conn, jellyfin, sync.Action(sync.MARK_ABSENT, "examplealpha", "jf-1"), True, NOW)
+    apply(conn, jellyfin, sync.Action(sync.MARK_ABSENT, "examplealpha", "jf-1"), True, NOW)
     assert db.get_states(conn)["examplealpha"].absent_since == NOW
     assert jellyfin.calls == []
 
-    sync.apply_action(conn, jellyfin, sync.Action(sync.CLEAR_ABSENT, "examplealpha", "jf-1"), True, NOW)
+    apply(conn, jellyfin, sync.Action(sync.CLEAR_ABSENT, "examplealpha", "jf-1"), True, NOW)
     assert db.get_states(conn)["examplealpha"].absent_since is None
 
 
 def test_an_unknown_action_is_refused(conn):
     with pytest.raises(ValueError, match="nonsense"):
-        sync.apply_action(conn, FakeJellyfin(), sync.Action("nonsense", "examplealpha"), False, NOW)
+        apply(conn, FakeJellyfin(), sync.Action("nonsense", "examplealpha"), False, NOW)
 
 
 def test_the_end_to_end_shape_of_a_disable(conn):
@@ -259,7 +267,60 @@ def test_the_end_to_end_shape_of_a_disable(conn):
         db.links_by_user(conn), {"999"}, users, db.get_states(conn), NOW, 72 * 3600, "ExampleChannel"
     )
     for action in actions:
-        sync.apply_action(conn, jellyfin, action, False, NOW)
+        apply(conn, jellyfin, action, False, NOW)
 
     assert jellyfin.calls == [("jf-1", True)]
     assert db.get_states(conn)["examplealpha"].disabled_by_us is True
+
+
+# --- the two ways Jellyfin and our ownership record can diverge ------------
+
+def test_a_failed_jellyfin_disable_leaves_no_ownership_claim(conn):
+    """A claim on an account we did not disable would lock the user out.
+
+    If the write to Jellyfin fails the claim is rolled back, and no audit row
+    says the disable happened.
+    """
+    jellyfin = FakeJellyfin(fail=True)
+    action = sync.Action(sync.DISABLE, "examplealpha", "jf-1", detail="grace elapsed")
+
+    with pytest.raises(RuntimeError, match="unreachable"):
+        apply(conn, jellyfin, action, False, NOW)
+
+    assert db.get_states(conn).get("examplealpha", db.UserState()).disabled_by_us is False
+    assert db.count_audit(conn, "disable") == 0
+
+
+def test_ownership_is_claimed_before_the_jellyfin_call(conn, monkeypatch):
+    """The database write must not be the thing that can fail last.
+
+    If Jellyfin succeeds and the claim is written afterwards, a failing write
+    leaves the account disabled and unowned, and it can never be re-enabled.
+    """
+    order = []
+    real_set = db.set_disabled_by_us
+    monkeypatch.setattr(
+        sync.db, "set_disabled_by_us",
+        lambda conn_, user, owned: (order.append(f"claim={owned}"), real_set(conn_, user, owned))[1],
+    )
+
+    class Recording(FakeJellyfin):
+        def set_user_disabled(self, user_id, disabled):
+            order.append("jellyfin")
+            super().set_user_disabled(user_id, disabled)
+
+    apply(conn, Recording(), sync.Action(sync.DISABLE, "examplealpha", "jf-1"), False, NOW)
+
+    assert order == ["claim=True", "jellyfin"]
+    assert db.get_states(conn)["examplealpha"].disabled_by_us is True
+
+
+def test_applying_a_release_drops_the_ownership_claim(conn):
+    db.set_disabled_by_us(conn, "examplealpha", True)
+    jellyfin = FakeJellyfin()
+
+    apply(conn, jellyfin, sync.Action(sync.RELEASE, "examplealpha", "jf-1"), False, NOW)
+
+    assert db.get_states(conn)["examplealpha"].disabled_by_us is False
+    assert jellyfin.calls == []  # nothing is written to Jellyfin
+    assert db.recent_audit(conn)[0]["action"] == "release"

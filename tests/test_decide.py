@@ -280,3 +280,61 @@ def test_unlinked_jellyfin_users_skip_admins_and_disabled_accounts():
         },
     )
     assert names == ["exampleloose"]
+
+
+# --- reconciling a claim somebody else undid ------------------------------
+
+def test_an_account_re_enabled_by_hand_is_no_longer_claimed():
+    actions = run(
+        users={"examplename": user(disabled=False)},
+        states={"examplename": UserState(disabled_by_us=True)},
+    )
+    assert kinds(actions) == [sync.RELEASE]
+
+
+def test_a_human_disable_after_a_hand_re_enable_is_not_undone():
+    """The bug the release action exists to prevent.
+
+    We disable alice. An administrator re-enables her by hand, then later
+    disables her deliberately. Without the release, the stale claim makes us
+    switch her back on.
+    """
+    # Cycle one: she is back in the channel and enabled, so the claim goes.
+    first = run(
+        users={"examplename": user(disabled=False)},
+        states={"examplename": UserState(disabled_by_us=True)},
+    )
+    assert kinds(first) == [sync.RELEASE]
+
+    # Cycle two: an administrator has disabled her. We leave her alone.
+    second = run(
+        users={"examplename": user(disabled=True)},
+        states={"examplename": UserState(disabled_by_us=False)},
+    )
+    assert second == []
+
+
+def test_a_stale_claim_is_released_while_the_member_is_absent_too():
+    actions = run(
+        participants={"999"},
+        states={"examplename": UserState(absent_since=NOW - 10, disabled_by_us=True)},
+    )
+    assert kinds(actions) == [sync.RELEASE]
+
+
+def test_a_release_is_ordered_before_the_disable_that_reclaims_it():
+    # Absent past the grace window with a stale claim: release must not run
+    # after the disable, or it would throw the fresh claim away.
+    actions = run(
+        participants={"999"},
+        states={"examplename": UserState(absent_since=NOW - GRACE - 1, disabled_by_us=True)},
+    )
+    assert kinds(actions) == [sync.RELEASE, sync.DISABLE]
+
+
+def test_an_administrator_with_a_stale_claim_is_still_left_alone():
+    actions = run(
+        users={"examplename": user(admin=True)},
+        states={"examplename": UserState(disabled_by_us=True)},
+    )
+    assert actions == []

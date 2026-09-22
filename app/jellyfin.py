@@ -7,9 +7,12 @@ policy, and it does so by reading the whole policy back first -- see
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import requests
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,14 @@ class JellyfinError(Exception):
 class JellyfinClient:
     def __init__(self, base_url: str, api_key: str, session=None, timeout: int = 30):
         self.base_url = base_url.rstrip("/")
+        if self.base_url.startswith("http://"):
+            # Not refused: the documented deployment reaches Jellyfin over a
+            # private Docker network. Over anything wider, the API key is
+            # readable by anyone on the path.
+            log.warning(
+                "JELLYFIN_URL is http://, so the Jellyfin API key travels in cleartext. "
+                "Use https:// if this connection leaves a trusted network."
+            )
         self.headers = {"X-Emby-Token": api_key}
         self.session = session or requests.Session()
         self.timeout = timeout

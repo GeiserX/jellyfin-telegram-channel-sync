@@ -87,3 +87,33 @@ def test_login_config_needs_no_jellyfin():
     )
     assert login.user_session == "/app/data/session_name"
     assert login.bot_session == "/app/data/bot_session"
+
+
+# --- settings that would quietly defeat the safety rules ------------------
+
+def test_a_threshold_of_zero_is_refused():
+    # An empty member list would pass the guardrail and disable everybody.
+    with pytest.raises(config.ConfigError, match="THRESHOLD_ENTRIES must be 1 or more"):
+        config.load_config({**BASE_ENV, "THRESHOLD_ENTRIES": "0"})
+
+
+def test_a_negative_threshold_is_refused():
+    with pytest.raises(config.ConfigError, match="THRESHOLD_ENTRIES"):
+        config.load_config({**BASE_ENV, "THRESHOLD_ENTRIES": "-1"})
+
+
+@pytest.mark.parametrize("raw", ["0", "-5"])
+def test_a_non_positive_interval_is_refused(raw):
+    # asyncio.sleep(0) after every cycle is a tight loop.
+    with pytest.raises(config.ConfigError, match="SCRIPT_INTERVAL must be 1 or more"):
+        config.load_config({**BASE_ENV, "SCRIPT_INTERVAL": raw})
+
+
+def test_a_negative_grace_is_refused():
+    with pytest.raises(config.ConfigError, match="GRACE_HOURS"):
+        config.load_config({**BASE_ENV, "GRACE_HOURS": "-1"})
+
+
+def test_a_grace_of_zero_is_allowed():
+    # Disable on the cycle after the first absence. A deliberate choice.
+    assert config.load_config({**BASE_ENV, "GRACE_HOURS": "0"}).grace_hours == 0

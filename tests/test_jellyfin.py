@@ -186,3 +186,15 @@ def test_an_http_error_on_the_user_list_propagates():
 
     with pytest.raises(RuntimeError, match="401"):
         JellyfinClient("http://jellyfin:8096", "fakekey", session=Failing()).list_users()
+
+
+def test_an_http_url_warns_that_the_api_key_travels_in_cleartext(caplog):
+    with caplog.at_level("WARNING"):
+        JellyfinClient("http://jellyfin:8096", "fakekey", session=FakeSession())
+    assert "cleartext" in caplog.text
+
+
+def test_an_https_url_warns_about_nothing(caplog):
+    with caplog.at_level("WARNING"):
+        JellyfinClient("https://jellyfin.example.invalid", "fakekey", session=FakeSession())
+    assert caplog.text == ""

@@ -159,7 +159,7 @@ Everything is one SQLite file, `/app/data/sync.db`, with four tables defined in 
 
 | Problem | Cause | Fix |
 |---|---|---|
-| `The Telegram user session is not authorized` | The session file is missing or was revoked | Run `python -m app.login` again |
+| `The Telegram user session is not authorized` | The session file is missing or was revoked | Run `docker compose run --rm jellytelegram-sync python -m app.login` again |
 | `Configuration error: X is required` | A variable is missing | The message names it; the container exits with code 2 |
 | The bot ignores you | You are not `OWNER_ID`, or you wrote in a group | Check `OWNER_ID`, and write in the private chat |
 | No notifications arrive | Telegram will not let a bot message someone who has never written to it | Send the bot `/start` once |

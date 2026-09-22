@@ -7,6 +7,7 @@ reply -- the bot has no business posting anywhere but that one chat.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
@@ -52,6 +53,38 @@ def parse_command(text: str) -> tuple[str, list[str]] | None:
     return name, parts[1:]
 
 
+# Telegram refuses a message longer than this.
+MESSAGE_LIMIT = 4096
+
+
+def chunk_message(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
+    """Split a report into sendable pieces, at line boundaries where possible.
+
+    `/unknown` on a channel with a few hundred unlinked members runs well past
+    the limit, and Telegram rejects the whole message rather than truncating.
+    """
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        while len(line) > limit:  # a single line longer than the limit
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _format_timestamp(value: int | None) -> str:
     if value is None:
         return "never"
@@ -76,7 +109,7 @@ async def _cmd_link(ctx: BotContext, args: list[str]) -> str:
     except Exception as error:
         return f"Could not resolve {handle}: {error}"
 
-    jellyfin_users = ctx.jellyfin.users_by_name()
+    jellyfin_users = await asyncio.to_thread(ctx.jellyfin.users_by_name)
     jellyfin_user = _match_jellyfin_user(jellyfin_users, wanted)
     if jellyfin_user is None:
         return f"No Jellyfin user named {wanted!r}. Check /unlinked."
@@ -127,9 +160,8 @@ async def _cmd_unknown(ctx: BotContext, args: list[str]) -> str:
 
 
 async def _cmd_unlinked(ctx: BotContext, args: list[str]) -> str:
-    names = sync.unlinked_jellyfin_users(
-        db.links_by_user(ctx.conn), ctx.jellyfin.users_by_name()
-    )
+    jellyfin_users = await asyncio.to_thread(ctx.jellyfin.users_by_name)
+    names = sync.unlinked_jellyfin_users(db.links_by_user(ctx.conn), jellyfin_users)
     if not names:
         return "Every enabled Jellyfin user is linked."
     return f"{len(names)} enabled Jellyfin users with no link:\n" + "\n".join(names)
@@ -210,7 +242,8 @@ async def on_message(ctx: BotContext, event) -> str | None:
     reply = await handle_command(ctx, getattr(event, "raw_text", "") or "")
     if reply is None:
         return None
-    await event.reply(reply)
+    for part in chunk_message(reply):
+        await event.reply(part)
     return reply
 
 

@@ -24,7 +24,7 @@ async def run_cycle(ctx: bot.BotContext) -> str:
         db.set_last_sync(ctx.conn, now)
         return "Member list came back below THRESHOLD_ENTRIES. Nothing was changed."
 
-    jellyfin_users = ctx.jellyfin.users_by_name()
+    jellyfin_users = await asyncio.to_thread(ctx.jellyfin.users_by_name)
     links = db.links_by_user(ctx.conn)
     actions = sync.decide(
         links_by_user=links,
@@ -40,7 +40,7 @@ async def run_cycle(ctx: bot.BotContext) -> str:
     counts: dict[str, int] = {}
     for action in actions:
         try:
-            sync.apply_action(ctx.conn, ctx.jellyfin, action, dry_run, now)
+            await sync.apply_action(ctx.conn, ctx.jellyfin, action, dry_run, now)
         except Exception as error:  # one bad account must not stop the cycle
             log.exception("Action %s on %s failed", action.kind, action.jellyfin_user)
             db.record_audit(ctx.conn, "error", action.jellyfin_user, f"{action.kind}: {error}", now=now)

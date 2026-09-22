@@ -8,6 +8,7 @@ makes the whole policy testable.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from . import db
@@ -17,6 +18,11 @@ DISABLE = "disable"
 ENABLE = "enable"
 MARK_ABSENT = "mark_absent"
 CLEAR_ABSENT = "clear_absent"
+RELEASE = "release"
+
+# Bookkeeping runs before the Jellyfin writes, so that releasing a stale
+# ownership claim cannot undo the claim a disable makes in the same cycle.
+_ORDER = {RELEASE: 0, CLEAR_ABSENT: 1, MARK_ABSENT: 2, ENABLE: 3, DISABLE: 4}
 
 
 @dataclass(frozen=True)
@@ -28,8 +34,8 @@ class Action:
     detail: str = ""
 
 
-def _sort_key(action: Action) -> tuple[str, str]:
-    return (action.jellyfin_user, action.kind)
+def _sort_key(action: Action) -> tuple[str, int]:
+    return (action.jellyfin_user, _ORDER[action.kind])
 
 
 def decide(
@@ -63,6 +69,13 @@ def decide(
 
         state = states.get(jellyfin_user, db.UserState())
         present = bool(telegram_ids & participants)
+
+        if state.disabled_by_us and not user.disabled:
+            # Somebody re-enabled the account by hand. Stop claiming it, or a
+            # later human disable would be undone on the next cycle.
+            actions.append(
+                Action(RELEASE, jellyfin_user, user.id, detail="re-enabled outside this service")
+            )
 
         if present:
             if state.absent_since is not None:
@@ -128,26 +141,40 @@ def unlinked_jellyfin_users(
     )
 
 
-def apply_action(conn, jellyfin_client, action: Action, dry_run: bool, now: int) -> None:
+async def apply_action(conn, jellyfin_client, action: Action, dry_run: bool, now: int) -> None:
     """Persist and perform one action. In dry run no Jellyfin account changes.
 
     Absence bookkeeping still runs in dry run, so the grace clock is real and
     the "would be disabled" message arrives when it really would have.
+
+    The Jellyfin calls are synchronous `requests`, so they go to a worker
+    thread. The SQLite connection stays on the calling thread, which owns it.
     """
     if action.kind == MARK_ABSENT:
         db.set_absent_since(conn, action.jellyfin_user, now)
     elif action.kind == CLEAR_ABSENT:
         db.set_absent_since(conn, action.jellyfin_user, None)
+    elif action.kind == RELEASE:
+        db.set_disabled_by_us(conn, action.jellyfin_user, False)
     elif action.kind == DISABLE:
         if not dry_run:
-            jellyfin_client.set_user_disabled(action.user_id, True)
+            # Claim ownership first. If the write to Jellyfin succeeds but the
+            # database write does not, the account would be disabled with
+            # nobody owning it, and this service could never re-enable it.
+            # Claiming first fails the harmless way instead: a claim on an
+            # enabled account, which the next cycle releases.
             db.set_disabled_by_us(conn, action.jellyfin_user, True)
+            try:
+                await asyncio.to_thread(jellyfin_client.set_user_disabled, action.user_id, True)
+            except Exception:
+                db.set_disabled_by_us(conn, action.jellyfin_user, False)
+                raise
     elif action.kind == ENABLE:
         if not dry_run:
-            jellyfin_client.set_user_disabled(action.user_id, False)
+            await asyncio.to_thread(jellyfin_client.set_user_disabled, action.user_id, False)
             db.set_disabled_by_us(conn, action.jellyfin_user, False)
             db.set_absent_since(conn, action.jellyfin_user, None)
-    else:  # pragma: no cover - guarded by the action constants
+    else:
         raise ValueError(f"unknown action {action.kind!r}")
 
     db.record_audit(
