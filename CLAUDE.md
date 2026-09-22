@@ -4,8 +4,8 @@
 A daemon that keeps Jellyfin accounts in step with a Telegram channel. Members who leave the channel have their Jellyfin account disabled after a grace window; members who come back have it enabled again. The owner assigns the Telegram-to-Jellyfin links from a Telegram bot.
 
 ## Tech Stack
-- Python 3.13 (the image runs 3.14; CI tests both)
-- Telethon — two clients, two session files: a user session lists the channel, a bot talks to the owner
+- Python 3.13. The image runs 3.14 and CI tests both.
+- Telethon, two clients with two session files. The user session lists the channel, the bot talks to the owner.
 - Requests (Jellyfin API)
 - SQLite (stdlib `sqlite3`, no ORM)
 - Docker (drumsergio/jellyfin-telegram-channel-sync)
@@ -19,15 +19,15 @@ docker compose up
 ```
 
 ## Architecture
-- `app/config.py` — every environment variable, parsed in a function
-- `app/db.py` — schema, the migration from the pre-1.0 `users` table, links, state, audit, settings
-- `app/jellyfin.py` — the Jellyfin admin client
-- `app/telegram.py` — the user session (member list) and the bot
-- `app/sync.py` — `decide()`, a pure function over plain data, plus `apply_action()`
-- `app/bot.py` — the owner's commands
-- `app/main.py` — the cycle and the bootstrap
-- `app/login.py` — one-off interactive sign-in for both sessions
-- `tests/` — pytest, fakes only
+- [app/config.py](app/config.py) parses every environment variable inside a function.
+- [app/db.py](app/db.py) holds the schema, the migration from the pre-1.0 `users` table, links, state, audit and settings.
+- [app/jellyfin.py](app/jellyfin.py) is the Jellyfin admin client.
+- [app/telegram.py](app/telegram.py) has the user session (member list) and the bot.
+- [app/sync.py](app/sync.py) has `decide()`, a pure function over plain data, and `apply_action()`.
+- [app/bot.py](app/bot.py) has the owner's commands.
+- [app/main.py](app/main.py) has the cycle and the bootstrap.
+- [app/login.py](app/login.py) is the one-off interactive sign-in for both sessions.
+- [tests/](tests) is pytest with fakes only.
 
 ## Key Rules
 - **Never POST a partial user policy.** `POST /Users/{id}/Policy` replaces the whole object, so a body of `{"IsDisabled": true}` resets the admin flag, library access and every limit. Read the policy with `GET /Users/{id}`, change the one field, post it all back.
