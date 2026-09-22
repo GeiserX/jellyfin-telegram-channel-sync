@@ -8,21 +8,21 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.14 is what the image runs; 3.13 is the documented floor.
+        python-version: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - run: pip install -r app/requirements.txt && pip install pytest pytest-cov
-      - run: pytest --cov --cov-report=xml -v
-        env:
-          TELEGRAM_API_ID: "12345"
-          TELEGRAM_API_HASH: "fakehash"
-          TELEGRAM_CHANNEL: "-1001234567890"
-          THRESHOLD_ENTRIES: "5"
-          JELLYFIN_URL: "http://localhost:8096"
-          JELLYFIN_API_KEY: "fakekey"
+      # No environment variables: configuration is parsed in a function, not at
+      # import time, so the test suite needs none.
+      - run: pytest --cov=app --cov-report=xml -v
       - uses: codecov/codecov-action@v7
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && matrix.python-version == '3.13'
         with:
           fail_ci_if_error: false

@@ -10,8 +10,10 @@ WORKDIR /app
 COPY app/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy script
-COPY app/sync.py sync.py
+# Copy the application package
+COPY app/ app/
 
-# Persist DB and Telethon session files via bind mount (handled in docker-compose)
-CMD ["python", "sync.py"]
+# Persist the database and both Telethon session files via bind mount
+VOLUME ["/app/data"]
+
+CMD ["python", "-m", "app.main"]

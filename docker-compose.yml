@@ -1,22 +1,31 @@
 services:
   jellytelegram-sync:
-    image: drumsergio/jellytelegram-sync:0.0.10
+    image: drumsergio/jellyfin-telegram-channel-sync:1.0.0
     container_name: jellytelegram-sync
     environment:
-      # Telegram variables
+      # Telegram user account (lists the channel members)
       - TELEGRAM_API_ID=your_telegram_api_id
       - TELEGRAM_API_HASH=your_telegram_api_hash
-      - TELEGRAM_CHANNEL=username_or_channel_id
-      - THRESHOLD_ENTRIES=100 # If returned entries are lower than this value, discard disabling users
+      - TELEGRAM_CHANNEL=-1001234567890
 
-      # Jellyfin variables
+      # Telegram bot (owner commands and notifications)
+      - TELEGRAM_BOT_TOKEN=your_bot_token
+      - OWNER_ID=your_numeric_telegram_id
+
+      # Jellyfin
       - JELLYFIN_URL=http://your_jellyfin_url:8096
       - JELLYFIN_API_KEY=your_jellyfin_api_key
-      
-      # Script interval execution (in seconds). If you want it to run constantly, you would adjust the code accordingly (optional)
+
+      # Safety: skip the cycle if fewer members than this come back
+      - THRESHOLD_ENTRIES=100
+      # Seconds between cycles
       - SCRIPT_INTERVAL=3600
+      # Hours a member may be missing before the account is disabled
+      - GRACE_HOURS=72
+      # Start with true; flip to false (or /dryrun off) once the links look right
+      - DRY_RUN=true
 
     volumes:
-      - /mnt/user/appdata/jellytelegram-sync:/app/data # users.csv and Telegram session
+      - ./data:/app/data # database and both Telegram session files
 
     restart: unless-stopped

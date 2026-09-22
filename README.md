@@ -4,8 +4,8 @@
 
 <p align="center">
   <a href="https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/LICENSE"><img src="https://img.shields.io/github/license/GeiserX/jellyfin-telegram-channel-sync?style=flat-square&color=6B4C9A" alt="License"></a>
-  <a href="https://hub.docker.com/r/drumsergio/jellytelegram-sync"><img src="https://img.shields.io/docker/pulls/drumsergio/jellytelegram-sync?style=flat-square&logo=docker&color=0088CC" alt="Docker Pulls"></a>
-  <a href="https://hub.docker.com/r/drumsergio/jellytelegram-sync"><img src="https://img.shields.io/docker/image-size/drumsergio/jellytelegram-sync/latest?style=flat-square&color=6B4C9A" alt="Docker Image Size"></a>
+  <a href="https://hub.docker.com/r/drumsergio/jellyfin-telegram-channel-sync"><img src="https://img.shields.io/docker/pulls/drumsergio/jellyfin-telegram-channel-sync?style=flat-square&logo=docker&color=0088CC" alt="Docker Pulls"></a>
+  <a href="https://hub.docker.com/r/drumsergio/jellyfin-telegram-channel-sync"><img src="https://img.shields.io/docker/image-size/drumsergio/jellyfin-telegram-channel-sync/latest?style=flat-square&color=6B4C9A" alt="Docker Image Size"></a>
   <img src="https://img.shields.io/badge/python-3.13-0088CC?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
   <a href="https://codecov.io/gh/GeiserX/jellyfin-telegram-channel-sync"><img src="https://codecov.io/gh/GeiserX/jellyfin-telegram-channel-sync/graph/badge.svg" alt="codecov"></a>
   <a href="https://github.com/awesome-jellyfin/awesome-jellyfin#readme"><img src="https://img.shields.io/badge/listed%20on-awesome--jellyfin-00a4dc?style=flat-square&logo=jellyfin&logoColor=white" alt="listed on awesome-jellyfin"></a>
@@ -13,153 +13,178 @@
 
 ---
 
-A lightweight daemon that **automatically syncs Jellyfin user access with Telegram channel membership**. When a user leaves (or is removed from) your Telegram channel, their Jellyfin account is disabled. When they rejoin, it is re-enabled. All state is tracked in a local SQLite database.
+A daemon that keeps Jellyfin accounts in step with a Telegram channel. If you hand out Jellyfin access through a private channel, that channel is your list of who should have access. Leave it and your account is disabled. Come back and it is enabled again.
 
-This is useful for communities that distribute Jellyfin access through a private Telegram channel -- the channel becomes the single source of truth for who should have access.
+You say who is who from a Telegram bot, in your own private chat with it. The bot also tells you every time an account changes.
 
-## Features
+## How it decides
 
-- **Automatic access control** -- Jellyfin accounts are enabled or disabled based on Telegram channel presence.
-- **Multi-ID support** -- A single Jellyfin user can be linked to multiple Telegram IDs (useful for users with multiple Telegram accounts).
-- **Threshold guardrail** -- If the number of fetched Telegram members drops below a configurable threshold, the sync cycle is skipped entirely. This prevents mass-disabling users due to a Telegram API hiccup or network issue.
-- **Unknown user detection** -- Telegram members not yet mapped in the database are logged with their ID, name, and username for easy onboarding.
-- **Persistent state** -- SQLite database and Telegram session file are stored on a bind-mounted volume, surviving container restarts.
-- **Configurable interval** -- The sync loop interval is controlled via an environment variable (default: 1 hour).
-- **Small footprint** -- Built on `python:3.13-slim`, with only two runtime dependencies (`telethon`, `requests`).
+Every cycle reads three things: who is in the channel, what Jellyfin thinks right now, and what this service did last time. Then, for each Jellyfin user you have linked:
+
+- **In the channel.** Nothing happens, unless the account is disabled *and this service is the one that disabled it*, in which case it is enabled again.
+- **Not in the channel.** A clock starts. Once the account has been missing for `GRACE_HOURS` (default 72), the service disables it and messages you. The clock lives in the database, so restarting the container does not reset it.
+- **Disabled by a person, not by this service.** Left alone, in both directions. The service only ever undoes its own work.
+- **An administrator.** Never touched, linked or not.
+- **Not linked.** Never touched. A Jellyfin account with no link is invisible to the sync.
+- **Fewer channel members than `THRESHOLD_ENTRIES`.** The whole cycle is skipped. A partial answer from Telegram must never be read as "everybody left".
+
+`DRY_RUN` is on by default. The messages arrive, the grace clock runs, and no Jellyfin account changes. Leave it on until `/links` looks right. The whole decision is one pure function in [app/sync.py](app/sync.py), so that list is exactly what the tests enumerate.
+
+## Why two Telegram sessions
+
+A bot cannot list the members of a broadcast channel. So a **user session**, yours as the channel's creator, reads the member list. The **bot** is a separate client that answers your commands and sends you notifications. It never posts into the channel, and it never answers anyone but you.
+
+Both sessions are files in `/app/data`, created once by [app/login.py](app/login.py).
 
 ## Prerequisites
 
-1. **Telegram API credentials** -- Obtain an `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org).
-2. **Telegram session file** -- You must generate a Telethon session file by authenticating once (see [Database and Session Setup](#database-and-session-setup) below).
-3. **Jellyfin API key** -- Generate one from your Jellyfin dashboard under **Administration > API Keys**.
-4. **Telegram channel** -- The numeric channel ID (e.g., `-1001234567890`) that serves as your access list.
+1. **Telegram API credentials.** An `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org).
+2. **A Telegram bot.** Create one with [@BotFather](https://t.me/BotFather) and keep the token.
+3. **Your own numeric Telegram id.** The only account the bot will obey. [@userinfobot](https://t.me/userinfobot) will tell you yours.
+4. **A Jellyfin API key.** Jellyfin dashboard, Administration > API Keys.
+5. **The channel id.** The numeric id (e.g. `-1001234567890`) of the channel you use as the access list. Your user account must be able to list its members.
 
-## Quick Start
+## Quick start
 
-### Docker Compose (recommended)
-
-Create a `docker-compose.yml`:
+### 1. Write the compose file
 
 ```yaml
 services:
   jellytelegram-sync:
-    image: drumsergio/jellytelegram-sync:0.0.10
+    image: drumsergio/jellyfin-telegram-channel-sync:1.0.0
     container_name: jellytelegram-sync
     environment:
       - TELEGRAM_API_ID=your_telegram_api_id
       - TELEGRAM_API_HASH=your_telegram_api_hash
       - TELEGRAM_CHANNEL=-1001234567890
-      - THRESHOLD_ENTRIES=100
+      - TELEGRAM_BOT_TOKEN=your_bot_token
+      - OWNER_ID=your_numeric_telegram_id
       - JELLYFIN_URL=http://your_jellyfin_url:8096
       - JELLYFIN_API_KEY=your_jellyfin_api_key
+      - THRESHOLD_ENTRIES=100
       - SCRIPT_INTERVAL=3600
+      - GRACE_HOURS=72
+      - DRY_RUN=true
     volumes:
       - ./data:/app/data
     restart: unless-stopped
 ```
 
+### 2. Sign in once, interactively
+
+```bash
+docker compose run --rm jellytelegram-sync python -m app.login
+```
+
+This asks for your phone number and the code Telegram sends you, then signs the bot in with its token. It writes two session files into `./data`:
+
+- `session_name.session` is your user account, which lists the channel members.
+- `bot_session.session` is the bot.
+
+Both are credentials. Keep the `data` directory private and out of git.
+
+### 3. Start it
+
 ```bash
 docker compose up -d
 ```
 
-## Environment Variables
+### 4. Link people
+
+Open a private chat with your bot and send `/start`. Then:
+
+```
+/unknown                       # everyone in the channel with no link yet
+/link 123456789 alice          # by numeric Telegram id
+/link @someone bob             # or by @username
+/links                         # check your work
+/unlinked                      # enabled Jellyfin users nobody is linked to
+```
+
+A Jellyfin user can hold several Telegram ids. Link them one at a time. Any one of them being in the channel counts as present.
+
+### 5. Turn it on for real
+
+When `/links` looks right, send `/dryrun off`. That setting is stored in the database, so it survives a restart and outlives the `DRY_RUN` variable.
+
+## Commands
+
+All of these work only in your private chat with the bot, and only for `OWNER_ID`. Anyone else is ignored without a reply.
+
+| Command | What it does |
+|---|---|
+| `/link <telegram_id\|@username> <jellyfin_user>` | Link a Telegram account to a Jellyfin user. The Jellyfin name is checked against the server. |
+| `/unlink <telegram_id>` | Remove one link. |
+| `/links` | Every link, grouped by Jellyfin user. |
+| `/unknown` | Channel members with no link: id, name, username. |
+| `/unlinked` | Enabled Jellyfin users with no link. |
+| `/status` | Last sync, link counts, how many are inside the grace window, dry-run state. |
+| `/sync` | Run a cycle now instead of waiting. |
+| `/dryrun on\|off` | Whether changes are really applied. Stored in the database. |
+| `/help` | The list above. |
+
+## Environment variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `TELEGRAM_API_ID` | Yes | -- | Telegram API ID from [my.telegram.org](https://my.telegram.org) |
-| `TELEGRAM_API_HASH` | Yes | -- | Telegram API hash from [my.telegram.org](https://my.telegram.org) |
-| `TELEGRAM_CHANNEL` | Yes | -- | Numeric Telegram channel ID (e.g., `-1001234567890`) |
-| `THRESHOLD_ENTRIES` | Yes | -- | Minimum number of members expected. If fewer are returned, the sync cycle is skipped to prevent accidental mass-disabling. Set this to a value safely below your actual member count. |
-| `JELLYFIN_URL` | Yes | -- | Base URL of your Jellyfin server (e.g., `http://jellyfin:8096`) |
-| `JELLYFIN_API_KEY` | Yes | -- | Jellyfin API key |
-| `SCRIPT_INTERVAL` | No | `3600` | Seconds between sync cycles |
+| `TELEGRAM_API_ID` | Yes | none | API id from [my.telegram.org](https://my.telegram.org) |
+| `TELEGRAM_API_HASH` | Yes | none | API hash from [my.telegram.org](https://my.telegram.org) |
+| `TELEGRAM_CHANNEL` | Yes | none | Numeric channel id (e.g. `-1001234567890`) or `@username` |
+| `TELEGRAM_BOT_TOKEN` | Yes | none | Bot token from [@BotFather](https://t.me/BotFather) |
+| `OWNER_ID` | Yes | none | Your numeric Telegram id. The only account the bot obeys. |
+| `JELLYFIN_URL` | Yes | none | Base URL of your Jellyfin server |
+| `JELLYFIN_API_KEY` | Yes | none | Jellyfin API key |
+| `THRESHOLD_ENTRIES` | Yes | none | Skip the cycle if fewer members than this come back. Set it safely below your real member count. |
+| `SCRIPT_INTERVAL` | No | `3600` | Seconds between cycles |
+| `GRACE_HOURS` | No | `72` | Hours a member may be missing before the account is disabled |
+| `DRY_RUN` | No | `true` | Report what would happen without changing anything. `/dryrun` overrides it once set. |
+| `DATA_DIR` | No | `/app/data` | Where the database and both session files live |
 
-## Database and Session Setup
+## Upgrading from 0.x
 
-The container expects a bind-mounted volume at `/app/data` containing two files:
+Keep your data volume and start 1.0.0. On the first run the migration imports the old `users` table from `jellyfin_users.db` into the new `sync.db`.
 
-### 1. SQLite Database (`jellyfin_users.db`)
+- Each space-separated Telegram id becomes its own link row, so multi-id users survive.
+- A row with `Enabled = 0` is recorded as *disabled by this service*, so those accounts come back on if the person rejoins.
 
-Create the database and populate it with your user mappings:
+The migration reads the old file and never writes to it or deletes it. Your user session file keeps its name, so you do not sign in again. You do need the new `TELEGRAM_BOT_TOKEN` and `OWNER_ID` variables, and a bot session, before the daemon will start.
 
-```bash
-sqlite3 data/jellyfin_users.db <<'SQL'
-CREATE TABLE IF NOT EXISTS users (
-    ID TEXT,
-    JellyfinUser TEXT PRIMARY KEY,
-    Enabled INTEGER DEFAULT 1
-);
-SQL
-```
+There is no longer any reason to edit the database by hand. `/link` does it.
 
-Insert your users. The `ID` column holds one or more Telegram user IDs (space-separated if multiple):
+## What is stored
 
-```bash
-sqlite3 data/jellyfin_users.db "INSERT INTO users (ID, JellyfinUser, Enabled) VALUES ('123456789', 'alice', 1);"
-sqlite3 data/jellyfin_users.db "INSERT INTO users (ID, JellyfinUser, Enabled) VALUES ('987654321 111222333', 'bob', 1);"
-```
-
-The second example shows a user (`bob`) mapped to two Telegram accounts.
-
-### 2. Telegram Session (`session_name.session`)
-
-Generate the Telethon session file by running an interactive authentication once:
-
-```bash
-docker run -it --rm \
-  -e TELEGRAM_API_ID=your_api_id \
-  -e TELEGRAM_API_HASH=your_api_hash \
-  -e TELEGRAM_CHANNEL=0 \
-  -e THRESHOLD_ENTRIES=0 \
-  -e JELLYFIN_URL=http://localhost \
-  -e JELLYFIN_API_KEY=dummy \
-  -v ./data:/app/data \
-  drumsergio/jellytelegram-sync:0.0.10 \
-  python -c "
-from telethon.sync import TelegramClient
-client = TelegramClient('/app/data/session_name', $(echo $TELEGRAM_API_ID), '$(echo $TELEGRAM_API_HASH)')
-client.start()
-print('Session created successfully.')
-client.disconnect()
-"
-```
-
-Follow the prompts to enter your phone number and verification code. The session file will be saved to your `data/` directory.
-
-## How It Works
-
-Each sync cycle follows this sequence:
-
-1. **Fetch Jellyfin users** -- All non-root users are retrieved from the Jellyfin API.
-2. **Load the database** -- The SQLite mapping table is read, associating Telegram IDs with Jellyfin usernames.
-3. **Fetch Telegram members** -- All participants of the configured channel are retrieved via the Telethon client.
-4. **Threshold check** -- If the member count is below `THRESHOLD_ENTRIES`, the cycle is aborted as a safety measure.
-5. **Sync loop** -- For each database entry:
-   - If the user's Telegram ID(s) are found in the channel but their account is disabled, it is **re-enabled**.
-   - If none of the user's Telegram ID(s) are found in the channel but their account is enabled, it is **disabled**.
-   - If the state matches, no action is taken.
-6. **Unknown ID detection** -- Any Telegram IDs present in the channel but absent from the database are logged, so you can add new users.
-7. **Sleep** -- The daemon waits for `SCRIPT_INTERVAL` seconds before repeating.
+Everything is one SQLite file, `/app/data/sync.db`, with four tables defined in [app/db.py](app/db.py). `links` holds one row per Telegram id. `user_state` records when someone was first seen missing and whether this service disabled them. `audit` holds one row per action, dry runs included. `settings` holds the `/dryrun` state and the last sync time.
 
 ## Troubleshooting
 
-| Problem | Cause | Solution |
+| Problem | Cause | Fix |
 |---|---|---|
-| `Telegram client is not authorized` | Missing or expired session file | Re-generate the session file (see above) |
-| All users disabled at once | `THRESHOLD_ENTRIES` set too low, or Telegram API returned partial results | Increase the threshold to a safe value below your actual member count |
-| User not being synced | Telegram ID not in the database | Check logs for "Unrecognized Telegram users" and add the mapping |
-| `User 'X' has no Telegram IDs in DB` | Empty `ID` field in the database row | Update the row: `UPDATE users SET ID = 'telegram_id' WHERE JellyfinUser = 'X';` |
-| Jellyfin API errors (401/403) | Invalid or expired API key | Regenerate the API key in Jellyfin admin panel |
-| `root` user not appearing | Filtered out by design | The `root` admin account is always excluded from sync |
+| `The Telegram user session is not authorized` | The session file is missing or was revoked | Run `docker compose run --rm jellytelegram-sync python -m app.login` again |
+| `Configuration error: X is required` | A variable is missing | The message names it; the container exits with code 2 |
+| The bot ignores you | You are not `OWNER_ID`, or you wrote in a group | Check `OWNER_ID`, and write in the private chat |
+| No notifications arrive | Telegram will not let a bot message someone who has never written to it | Send the bot `/start` once |
+| Nothing is ever disabled | Dry run is still on | `/status` shows it; `/dryrun off` |
+| `Member list came back below THRESHOLD_ENTRIES` | Telegram returned a partial list, or the threshold is too high | This is the guardrail working. Check the threshold against your real member count. |
+| Someone left but is still enabled | The grace window has not elapsed | `/status` shows how many are waiting; lower `GRACE_HOURS` if you want it sooner |
+| Jellyfin API errors (401/403) | Invalid or expired API key | Regenerate it in the Jellyfin dashboard |
 
-## Other Jellyfin Projects by GeiserX
+## Development
+
+```bash
+pip install -r app/requirements.txt && pip install pytest pytest-cov
+pytest --cov=app
+```
+
+The tests need no environment variables and no network. [app/config.py](app/config.py) parses the environment inside a function, [app/sync.py](app/sync.py) decides over plain data, and fakes stand in for Jellyfin and Telegram.
+
+## Other Jellyfin projects by GeiserX
 
 - [quality-gate](https://github.com/GeiserX/quality-gate) — Restrict users to specific media versions based on configurable path-based policies
 - [smart-covers](https://github.com/GeiserX/smart-covers) — Cover extraction for books, audiobooks, comics, magazines, and music libraries with online fallback
 - [whisper-subs](https://github.com/GeiserX/whisper-subs) — Automatic subtitle generation using local AI models powered by whisper.cpp
 - [jellyfin-encoder](https://github.com/GeiserX/jellyfin-encoder) — Automatic 720p HEVC/AV1 transcoding service with hardware acceleration
 
-## Other Telegram Projects by GeiserX
+## Other Telegram projects by GeiserX
 
 - [paperless-telegram-bot](https://github.com/GeiserX/paperless-telegram-bot) — Manage Paperless-NGX documents through Telegram
 - [AskePub](https://github.com/GeiserX/AskePub) — Telegram bot for ePub annotation with GPT-4
@@ -168,4 +193,4 @@ Each sync cycle follows this sequence:
 
 ## License
 
-This project is licensed under the [GNU Lesser General Public License v2.1](LICENSE).
+[GNU General Public License v3.0](LICENSE).
