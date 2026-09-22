@@ -173,10 +173,21 @@ def test_list_users_reports_the_admin_flag_and_the_disabled_flag():
     assert users["examplename"].is_administrator is False
 
 
-def test_the_api_key_travels_as_a_header():
+def test_the_api_key_travels_in_the_authorization_header():
+    # Jellyfin 12 answers 401 to X-Emby-Token and to X-MediaBrowser-Token.
     session = FakeSession(users=[])
     JellyfinClient("http://jellyfin:8096", "fakekey", session=session).list_users()
-    assert session.gets[0][1] == {"X-Emby-Token": "fakekey"}
+    assert session.gets[0][1] == {"Authorization": 'MediaBrowser Token="fakekey"'}
+
+
+def test_the_old_emby_header_is_not_sent_any_more():
+    session = FakeSession(user={"Id": "user-1", "Name": "examplename", "Policy": dict(FULL_POLICY)})
+    client = JellyfinClient("http://jellyfin:8096", "fakekey", session=session)
+    client.set_user_disabled("user-1", True)
+    for _, headers in session.gets:
+        assert "X-Emby-Token" not in headers
+        assert "X-MediaBrowser-Token" not in headers
+    assert "X-Emby-Token" not in session.posts[0]["headers"]
 
 
 def test_an_http_error_on_the_user_list_propagates():

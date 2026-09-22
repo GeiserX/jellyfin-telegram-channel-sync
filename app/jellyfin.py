@@ -38,7 +38,9 @@ class JellyfinClient:
                 "JELLYFIN_URL is http://, so the Jellyfin API key travels in cleartext. "
                 "Use https:// if this connection leaves a trusted network."
             )
-        self.headers = {"X-Emby-Token": api_key}
+        # Jellyfin 12 rejects X-Emby-Token and X-MediaBrowser-Token with 401.
+        # The Authorization scheme is the one it still accepts, quoting included.
+        self.headers = {"Authorization": f'MediaBrowser Token="{api_key}"'}
         self.session = session or requests.Session()
         self.timeout = timeout
 

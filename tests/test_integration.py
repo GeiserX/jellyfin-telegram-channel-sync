@@ -31,12 +31,28 @@ FULL_POLICY = {
 }
 
 
+EXPECTED_AUTH = 'MediaBrowser Token="fakekey"'
+
+
 class FakeJellyfinServer(BaseHTTPRequestHandler):
+    """Behaves like Jellyfin 12: only the Authorization scheme is accepted."""
+
     users = {}
     tokens = []
 
     def log_message(self, *args):
         pass
+
+    def _authorized(self):
+        auth = self.headers.get("Authorization")
+        FakeJellyfinServer.tokens.append(auth)
+        if self.headers.get("X-Emby-Token") or self.headers.get("X-MediaBrowser-Token"):
+            self._send({"error": "deprecated token header"}, status=401)
+            return False
+        if auth != EXPECTED_AUTH:
+            self._send({"error": "unauthorized"}, status=401)
+            return False
+        return True
 
     def _send(self, payload, status=200):
         body = json.dumps(payload).encode()
@@ -47,7 +63,8 @@ class FakeJellyfinServer(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        FakeJellyfinServer.tokens.append(self.headers.get("X-Emby-Token"))
+        if not self._authorized():
+            return
         if self.path == "/Users":
             self._send(list(FakeJellyfinServer.users.values()))
         elif self.path.startswith("/Users/"):
@@ -56,7 +73,8 @@ class FakeJellyfinServer(BaseHTTPRequestHandler):
             self._send({}, status=404)
 
     def do_POST(self):
-        FakeJellyfinServer.tokens.append(self.headers.get("X-Emby-Token"))
+        if not self._authorized():
+            return
         length = int(self.headers.get("Content-Length", 0))
         sent = json.loads(self.rfile.read(length))
         user_id = self.path.split("/")[2]
@@ -135,7 +153,7 @@ def test_a_real_cycle_disables_an_absent_member_without_losing_their_policy(
 
     assert notes == ["examplealpha left ExampleChannel, account disabled"]
     assert "Disabled 1" in summary
-    assert set(FakeJellyfinServer.tokens) == {"fakekey"}
+    assert set(FakeJellyfinServer.tokens) == {EXPECTED_AUTH}
     conn.close()
 
 
