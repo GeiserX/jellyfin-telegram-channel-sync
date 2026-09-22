@@ -153,3 +153,30 @@ def test_the_lookups_are_paced(monkeypatch):
     MembershipChecker("t", CHAT, session=session, delay=0.05).check_all({"111", "222", "333"})
 
     assert slept == [0.05, 0.05]  # between the calls, not before the first
+
+
+def test_the_bot_token_never_reaches_the_log(caplog):
+    # requests puts the request URL in its exception text, and the URL carries
+    # the bot token.
+    token = "12345:AAHsecrettokenvalue"
+    session = FakeSession(
+        raises=ConnectionError(f"HTTPSConnectionPool: /bot{token}/getChatMember failed")
+    )
+    with caplog.at_level("WARNING"):
+        MembershipChecker(token, CHAT, session=session, delay=0).status("111")
+
+    assert token not in caplog.text
+    assert "<bot token>" in caplog.text
+
+
+def test_a_malformed_body_error_is_redacted_too(caplog):
+    token = "12345:AAHsecrettokenvalue"
+
+    class Exploding(FakeResponse):
+        def json(self):
+            raise ValueError(f"no JSON from /bot{token}/getChatMember")
+
+    with caplog.at_level("WARNING"):
+        MembershipChecker(token, CHAT, session=FakeSession({"111": Exploding()}), delay=0).status("111")
+
+    assert token not in caplog.text

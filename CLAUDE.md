@@ -22,7 +22,8 @@ docker compose up
 - [app/config.py](app/config.py) parses every environment variable inside a function.
 - [app/db.py](app/db.py) holds the schema, the migration from the pre-1.0 `users` table, links, state, audit and settings.
 - [app/jellyfin.py](app/jellyfin.py) is the Jellyfin admin client.
-- [app/telegram.py](app/telegram.py) has the user session (member list) and the bot.
+- [app/telegram.py](app/telegram.py) has the user session (best-effort member listing, username lookup) and the bot.
+- [app/membership.py](app/membership.py) asks the admin bot whether one person is still in the channel.
 - [app/sync.py](app/sync.py) has `decide()`, a pure function over plain data, and `apply_action()`.
 - [app/bot.py](app/bot.py) has the owner's commands.
 - [app/main.py](app/main.py) has the cycle and the bootstrap.
@@ -32,7 +33,9 @@ docker compose up
 ## Key Rules
 - **Never POST a partial user policy.** `POST /Users/{id}/Policy` replaces the whole object, so a body of `{"IsDisabled": true}` resets the admin flag, library access and every limit. Read the policy with `GET /Users/{id}`, change the one field, post it all back.
 - **Never touch an account this service did not disable**, and never touch an administrator or an unlinked user.
-- **The threshold guardrail returns `None`, not a short list.** A partial member list must never be read as "everybody left".
+- **Never decide absence from a member listing.** Telegram stops a broadcast listing at 200 however you ask, so the listing is only good enough to populate `/unknown`. Who still has access is one `getChatMember` per linked account, and the threshold guardrail now only protects `/unknown`.
+- **Anything that is not a plain yes or no is UNKNOWN, and UNKNOWN changes nothing.** Timeouts, rate limits, deleted accounts and statuses Telegram adds later all land there. A person is absent only when every one of their linked accounts is explicitly out.
+- **Authenticate to Jellyfin with `Authorization: MediaBrowser Token="<key>"`.** Jellyfin 12 answers 401 to `X-Emby-Token` and `X-MediaBrowser-Token`.
 - Configuration is parsed in a function, never at import time; nothing in the loop calls `exit()`.
 - `decide()` stays pure: no network, no database, no clock. That is what makes the policy testable.
 - Never hardcode credentials. The database and both session files live in the bind-mounted `/app/data`.

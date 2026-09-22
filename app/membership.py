@@ -33,11 +33,16 @@ API_ROOT = "https://api.telegram.org"
 
 class MembershipChecker:
     def __init__(self, bot_token, chat_id, session=None, timeout=15, delay=0.05, api_root=API_ROOT):
+        self._token = bot_token
         self._url = f"{api_root}/bot{bot_token}/getChatMember"
         self.chat_id = chat_id
         self.session = session or requests.Session()
         self.timeout = timeout
         self.delay = delay
+
+    def _redact(self, value) -> str:
+        """The bot token is in the URL, and requests puts the URL in its errors."""
+        return str(value).replace(self._token, "<bot token>")
 
     def status(self, telegram_id: str) -> str:
         """PRESENT, ABSENT, or UNKNOWN when the answer cannot be trusted.
@@ -53,7 +58,7 @@ class MembershipChecker:
                 timeout=self.timeout,
             )
         except Exception as error:
-            log.warning("Membership lookup for %s failed: %s", telegram_id, error)
+            log.warning("Membership lookup for %s failed: %s", telegram_id, self._redact(error))
             return UNKNOWN
 
         if response.status_code != 200:
@@ -65,7 +70,9 @@ class MembershipChecker:
         try:
             payload = response.json()
         except Exception as error:
-            log.warning("Membership lookup for %s returned no JSON: %s", telegram_id, error)
+            log.warning(
+                "Membership lookup for %s returned no JSON: %s", telegram_id, self._redact(error)
+            )
             return UNKNOWN
 
         if not isinstance(payload, dict) or not payload.get("ok"):
