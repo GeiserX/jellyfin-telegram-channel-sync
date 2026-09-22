@@ -8,7 +8,7 @@ import pytest
 from app import db, sync
 from app.jellyfin import JellyfinUser
 
-NOW = 1_000_000
+NOW = 1_780_000_000  # a real clock: epoch 0 must look ancient, not recent
 
 
 @pytest.fixture

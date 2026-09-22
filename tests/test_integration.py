@@ -17,7 +17,7 @@ import pytest
 from app import bot, db, main, sync
 from app.jellyfin import JellyfinClient
 
-NOW = 1_000_000
+NOW = 1_780_000_000  # a real clock: epoch 0 must look ancient, not recent
 GRACE = 72 * 3600
 
 FULL_POLICY = {
