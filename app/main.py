@@ -9,6 +9,7 @@ import time
 from . import bot, db, sync, telegram
 from .config import ConfigError, load_config
 from .jellyfin import JellyfinClient
+from .membership import MembershipChecker
 
 log = logging.getLogger("jellytelegram")
 
@@ -17,18 +18,21 @@ async def run_cycle(ctx: bot.BotContext) -> str:
     """One pass: read the world, decide, apply, report."""
     now = int(time.time())
     dry_run = db.get_dry_run(ctx.conn, ctx.config.dry_run)
-    participants = await ctx.fetch_participants()
+    links = db.links_by_user(ctx.conn)
+    linked_ids = {telegram_id for ids in links.values() for telegram_id in ids}
 
-    if participants is None:
-        db.record_audit(ctx.conn, "guardrail", None, "member list below threshold", now=now)
-        db.set_last_sync(ctx.conn, now)
-        return "Member list came back below THRESHOLD_ENTRIES. Nothing was changed."
+    presence = await ctx.check_presence(linked_ids)
+    unknown = sum(1 for state in presence.values() if state == sync.UNKNOWN)
+    db.set_setting(ctx.conn, "last_unknown", str(unknown))
+    if unknown:
+        db.record_audit(
+            ctx.conn, "unanswered", None, f"{unknown} membership lookups unanswered", now=now
+        )
 
     jellyfin_users = await asyncio.to_thread(ctx.jellyfin.users_by_name)
-    links = db.links_by_user(ctx.conn)
     actions = sync.decide(
         links_by_user=links,
-        participants=set(participants),
+        presence=presence,
         jellyfin_users=jellyfin_users,
         states=db.get_states(ctx.conn),
         now=now,
@@ -54,7 +58,8 @@ async def run_cycle(ctx: bot.BotContext) -> str:
     db.set_last_sync(ctx.conn, now)
     summary = (
         f"Sync done{' (dry run)' if dry_run else ''}. "
-        f"{len(participants)} channel members, {len(links)} linked Jellyfin users. "
+        f"{len(linked_ids)} linked Telegram accounts checked ({unknown} unanswered), "
+        f"{len(links)} linked Jellyfin users. "
         f"Disabled {counts.get(sync.DISABLE, 0)}, re-enabled {counts.get(sync.ENABLE, 0)}, "
         f"newly absent {counts.get(sync.MARK_ABSENT, 0)}, back {counts.get(sync.CLEAR_ABSENT, 0)}."
     )
@@ -88,6 +93,7 @@ async def periodic(ctx: bot.BotContext, cycles: int | None = None) -> None:
 
 async def build_context(config, conn, user_client, bot_client) -> bot.BotContext:
     title = await telegram.channel_title(user_client, config.channel)
+    checker = MembershipChecker(config.bot_token, config.channel)
     context = bot.BotContext(
         conn=conn,
         jellyfin=JellyfinClient(config.jellyfin_url, config.jellyfin_api_key),
@@ -96,6 +102,8 @@ async def build_context(config, conn, user_client, bot_client) -> bot.BotContext
         fetch_participants=lambda: telegram.fetch_participants(
             user_client, config.channel, config.threshold_entries
         ),
+        check_presence=lambda ids: asyncio.to_thread(checker.check_all, ids),
+        subscriber_count=lambda: telegram.participants_count(user_client, config.channel),
         run_cycle=None,
         channel_title=title,
         notify=lambda text: telegram.send_owner(bot_client, config.owner_id, text),

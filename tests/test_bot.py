@@ -236,10 +236,38 @@ def test_unknown_lists_channel_members_with_no_link(ctx):
     assert "Example One" not in reply  # 111 is linked, so it is not listed
 
 
-def test_unknown_when_everyone_is_linked(ctx):
+def test_unknown_when_everyone_the_listing_can_see_is_linked(ctx):
     say(ctx, "/link 111 examplealpha")
     say(ctx, "/link 777000111 examplebravo")
-    assert say(ctx, "/unknown") == "Every channel member is linked."
+    assert say(ctx, "/unknown").startswith("Every member the listing can see is linked.")
+
+
+def test_unknown_says_how_much_of_the_channel_the_listing_saw(ctx):
+    async def count():
+        return 210
+
+    ctx.subscriber_count = count
+    reply = say(ctx, "/unknown")
+    assert "The listing saw 2 of 210 subscribers" in reply
+    assert "stops a broadcast listing at 200" in reply
+
+
+def test_unknown_says_nothing_about_coverage_when_the_count_is_unavailable(ctx):
+    async def count():
+        return None
+
+    ctx.subscriber_count = count
+    reply = say(ctx, "/unknown")
+    assert "The listing saw 2." in reply
+    assert "subscribers" not in reply
+
+
+def test_unknown_does_not_nag_when_the_listing_saw_everyone(ctx):
+    async def count():
+        return 2
+
+    ctx.subscriber_count = count
+    assert "stops a broadcast listing" not in say(ctx, "/unknown")
 
 
 def test_unknown_says_so_when_the_member_list_is_untrustworthy(ctx):

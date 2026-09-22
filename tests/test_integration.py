@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from app import bot, db, main
+from app import bot, db, main, sync
 from app.jellyfin import JellyfinClient
 
 NOW = 1_000_000
@@ -121,6 +121,9 @@ def test_a_real_cycle_disables_an_absent_member_without_losing_their_policy(
     async def participants():
         return {"111": {"username": "exampleone", "name": "Example One"}}
 
+    async def check_presence(ids):
+        return {i: (sync.PRESENT if i == "111" else sync.ABSENT) for i in ids}
+
     class Config:
         owner_id = 555000111
         dry_run = False
@@ -138,6 +141,7 @@ def test_a_real_cycle_disables_an_absent_member_without_losing_their_policy(
         run_cycle=None,
         channel_title="ExampleChannel",
         notify=notify,
+        check_presence=check_presence,
     )
 
     summary = asyncio.run(main.run_cycle(ctx))
@@ -169,6 +173,9 @@ def test_a_real_cycle_re_enables_a_returning_member(jellyfin_server, tmp_path, m
     async def participants():
         return {"111": {"username": "exampleone", "name": "Example One"}}
 
+    async def check_presence(ids):
+        return {i: (sync.PRESENT if i == "111" else sync.ABSENT) for i in ids}
+
     class Config:
         owner_id = 555000111
         dry_run = False
@@ -185,6 +192,7 @@ def test_a_real_cycle_re_enables_a_returning_member(jellyfin_server, tmp_path, m
         fetch_participants=participants,
         run_cycle=None,
         channel_title="ExampleChannel",
+        check_presence=check_presence,
     )
 
     asyncio.run(main.run_cycle(ctx))

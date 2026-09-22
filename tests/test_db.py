@@ -264,7 +264,13 @@ def test_the_end_to_end_shape_of_a_disable(conn):
     users = {"examplealpha": JellyfinUser("examplealpha", "jf-1", False, False)}
 
     actions = sync.decide(
-        db.links_by_user(conn), {"999"}, users, db.get_states(conn), NOW, 72 * 3600, "ExampleChannel"
+        db.links_by_user(conn),
+        {"111": sync.ABSENT},
+        users,
+        db.get_states(conn),
+        NOW,
+        72 * 3600,
+        "ExampleChannel",
     )
     for action in actions:
         apply(conn, jellyfin, action, False, NOW)
