@@ -123,8 +123,12 @@ async def amain(config) -> int:  # pragma: no cover - bootstrap
             f"Sync daemon started for {context.channel_title}. "
             f"Dry run is {'on' if db.get_dry_run(conn, config.dry_run) else 'off'}. /help for commands.",
         )
-        asyncio.create_task(periodic(context))
-        await bot_client.run_until_disconnected()
+        # Hold the reference: a bare create_task can be garbage collected.
+        cycles = asyncio.create_task(periodic(context))
+        try:
+            await bot_client.run_until_disconnected()
+        finally:
+            cycles.cancel()
     finally:
         await user_client.disconnect()
         conn.close()

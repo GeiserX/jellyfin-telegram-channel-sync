@@ -23,7 +23,6 @@ comment:
   require_head: true
 
 ignore:
-  - "app/login.py"  # one-off interactive sign-in
   - "**/__pycache__/**"
   - "dist/**"
   - "build/**"
