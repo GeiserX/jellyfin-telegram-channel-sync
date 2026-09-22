@@ -209,3 +209,77 @@ def test_an_https_url_warns_about_nothing(caplog):
     with caplog.at_level("WARNING"):
         JellyfinClient("https://jellyfin.example.invalid", "fakekey", session=FakeSession())
     assert caplog.text == ""
+
+
+# --- reading the two timestamps Jellyfin keeps ---------------------------
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "2026-09-01T12:34:56.7890000Z",  # what Jellyfin actually sends: 7 digits
+        "2026-09-01T12:34:56Z",
+        "2026-09-01T12:34:56.789Z",
+        "2026-09-01T12:34:56",  # no zone: read as UTC, which is what Jellyfin means
+    ],
+)
+def test_the_timestamp_formats_jellyfin_sends(raw):
+    from app.jellyfin import parse_date
+
+    assert parse_date(raw) == 1788266096
+
+
+def test_an_offset_is_honoured():
+    from app.jellyfin import parse_date
+
+    assert parse_date("2026-09-01T12:34:56+02:00") == 1788266096 - 7200
+
+
+@pytest.mark.parametrize("raw", ["", "   ", None, "not a date", 12345, {}, "2026-13-45T00:00:00Z"])
+def test_anything_that_is_not_a_timestamp_reads_as_no_record(raw):
+    from app.jellyfin import parse_date
+
+    # None, never a number: an account with no recorded use must not look
+    # like one last used in 1970.
+    assert parse_date(raw) is None
+
+
+def test_the_more_recent_of_the_two_timestamps_wins():
+    session = FakeSession(
+        users=[
+            {
+                "Name": "examplename",
+                "Id": "id-1",
+                "Policy": {"IsDisabled": False, "IsAdministrator": False},
+                "LastActivityDate": "2026-09-01T00:00:00Z",
+                "LastLoginDate": "2026-01-01T00:00:00Z",
+            }
+        ]
+    )
+    user = JellyfinClient("http://jellyfin:8096", "fakekey", session=session).users_by_name()
+    assert user["examplename"].last_used_date == "2026-09-01"
+
+
+def test_one_timestamp_is_enough():
+    session = FakeSession(
+        users=[
+            {
+                "Name": "examplename",
+                "Id": "id-1",
+                "Policy": {"IsDisabled": False, "IsAdministrator": False},
+                "LastLoginDate": "2026-01-01T00:00:00Z",
+            }
+        ]
+    )
+    user = JellyfinClient("http://jellyfin:8096", "fakekey", session=session).users_by_name()
+    assert user["examplename"].last_used_date == "2026-01-01"
+
+
+def test_neither_timestamp_means_no_record():
+    session = FakeSession(
+        users=[
+            {"Name": "examplename", "Id": "id-1", "Policy": {"IsDisabled": False, "IsAdministrator": False}}
+        ]
+    )
+    user = JellyfinClient("http://jellyfin:8096", "fakekey", session=session).users_by_name()
+    assert user["examplename"].last_used is None
+    assert user["examplename"].last_used_date == "never"

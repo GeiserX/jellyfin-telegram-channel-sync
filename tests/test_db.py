@@ -8,7 +8,7 @@ import pytest
 from app import db, sync
 from app.jellyfin import JellyfinUser
 
-NOW = 1_000_000
+NOW = 1_780_000_000  # a real clock: epoch 0 must look ancient, not recent
 
 
 @pytest.fixture
@@ -307,7 +307,10 @@ def test_ownership_is_claimed_before_the_jellyfin_call(conn, monkeypatch):
     real_set = db.set_disabled_by_us
     monkeypatch.setattr(
         sync.db, "set_disabled_by_us",
-        lambda conn_, user, owned: (order.append(f"claim={owned}"), real_set(conn_, user, owned))[1],
+        lambda conn_, user, owned, reason=None: (
+            order.append(f"claim={owned}"),
+            real_set(conn_, user, owned, reason),
+        )[1],
     )
 
     class Recording(FakeJellyfin):
@@ -330,3 +333,121 @@ def test_applying_a_release_drops_the_ownership_claim(conn):
     assert db.get_states(conn)["examplealpha"].disabled_by_us is False
     assert jellyfin.calls == []  # nothing is written to Jellyfin
     assert db.recent_audit(conn)[0]["action"] == "release"
+
+
+# --- schema 2: why an account was disabled -------------------------------
+
+def test_a_1x_database_gains_the_reason_column(tmp_path):
+    """Upgrading must not lose the accounts 1.x already disabled."""
+    path = tmp_path / "sync.db"
+    old = sqlite3.connect(str(path))
+    old.executescript(
+        """
+        CREATE TABLE links (telegram_id TEXT PRIMARY KEY, jellyfin_user TEXT NOT NULL,
+                            created_at INTEGER NOT NULL);
+        CREATE TABLE user_state (jellyfin_user TEXT PRIMARY KEY, absent_since INTEGER,
+                                 disabled_by_us INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL,
+                            action TEXT NOT NULL, jellyfin_user TEXT, detail TEXT,
+                            dry_run INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        PRAGMA user_version = 1;
+        """
+    )
+    old.execute("INSERT INTO links VALUES ('111', 'examplealpha', 1)")
+    old.execute("INSERT INTO user_state VALUES ('examplealpha', 100, 1)")
+    old.execute("INSERT INTO user_state VALUES ('examplebravo', NULL, 0)")
+    old.commit()
+    old.close()
+
+    connection = db.connect(str(path))
+    db.migrate(connection, now=NOW)
+
+    states = db.get_states(connection)
+    # What 1.x disabled, it disabled for leaving the channel.
+    assert states["examplealpha"].disabled_reason == db.LEFT_CHANNEL
+    assert states["examplealpha"].disabled_by_us is True
+    assert states["examplealpha"].absent_since == 100
+    assert states["examplebravo"].disabled_reason is None
+    assert db.get_links(connection) == {"111": "examplealpha"}
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    connection.close()
+
+
+def test_the_1x_upgrade_runs_only_once(tmp_path):
+    path = tmp_path / "sync.db"
+    old = sqlite3.connect(str(path))
+    old.executescript(
+        """
+        CREATE TABLE user_state (jellyfin_user TEXT PRIMARY KEY, absent_since INTEGER,
+                                 disabled_by_us INTEGER NOT NULL DEFAULT 0);
+        PRAGMA user_version = 1;
+        """
+    )
+    old.execute("INSERT INTO user_state VALUES ('examplealpha', NULL, 1)")
+    old.commit()
+    old.close()
+
+    connection = db.connect(str(path))
+    db.migrate(connection, now=NOW)
+    db.set_disabled_by_us(connection, "examplealpha", True, db.INACTIVE)
+    db.migrate(connection, now=NOW)
+
+    assert db.get_states(connection)["examplealpha"].disabled_reason == db.INACTIVE
+    connection.close()
+
+
+def test_the_reason_round_trips(conn):
+    db.set_disabled_by_us(conn, "examplealpha", True, db.INACTIVE)
+    assert db.get_states(conn)["examplealpha"].disabled_reason == db.INACTIVE
+
+    db.set_disabled_by_us(conn, "examplealpha", False)
+    assert db.get_states(conn)["examplealpha"].disabled_reason is None
+
+
+def test_the_inactive_mark_round_trips(conn):
+    db.set_inactive_mark(conn, "examplealpha", NOW)
+    assert db.get_states(conn)["examplealpha"].inactive_mark == NOW
+    db.set_inactive_mark(conn, "examplealpha", None)
+    assert db.get_states(conn)["examplealpha"].inactive_mark is None
+
+
+def test_an_inactivity_disable_records_the_reason_and_the_mark(conn):
+    jellyfin = FakeJellyfin()
+    action = sync.Action(
+        sync.DISABLE, "examplealpha", "jf-1", reason=db.INACTIVE, last_used=NOW - 400 * 86400
+    )
+
+    apply(conn, jellyfin, action, False, NOW)
+
+    state = db.get_states(conn)["examplealpha"]
+    assert state.disabled_by_us is True
+    assert state.disabled_reason == db.INACTIVE
+    assert state.inactive_mark == NOW - 400 * 86400
+
+
+def test_a_failed_inactivity_disable_leaves_no_mark_to_block_a_retry(conn):
+    jellyfin = FakeJellyfin(fail=True)
+    action = sync.Action(
+        sync.DISABLE, "examplealpha", "jf-1", reason=db.INACTIVE, last_used=NOW - 400 * 86400
+    )
+
+    with pytest.raises(RuntimeError):
+        apply(conn, jellyfin, action, False, NOW)
+
+    state = db.get_states(conn).get("examplealpha", db.UserState())
+    assert state.disabled_by_us is False
+    assert state.inactive_mark is None
+
+
+def test_a_channel_disable_records_its_own_reason(conn):
+    apply(
+        conn,
+        FakeJellyfin(),
+        sync.Action(sync.DISABLE, "examplealpha", "jf-1", reason=db.LEFT_CHANNEL),
+        False,
+        NOW,
+    )
+    state = db.get_states(conn)["examplealpha"]
+    assert state.disabled_reason == db.LEFT_CHANNEL
+    assert state.inactive_mark is None

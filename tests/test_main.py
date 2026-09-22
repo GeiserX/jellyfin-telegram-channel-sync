@@ -8,7 +8,7 @@ import pytest
 from app import bot, db, main, sync
 from app.jellyfin import JellyfinUser
 
-NOW = 1_000_000
+NOW = 1_780_000_000  # a real clock: epoch 0 must look ancient, not recent
 GRACE = 72 * 3600
 
 
@@ -19,17 +19,23 @@ class FakeConfig:
     grace_hours: int = 72
     interval: int = 0
     threshold_entries: int = 1
+    inactive_days: int = 0  # the inactivity rule is off unless a test wants it
+    exempt_users: frozenset = frozenset()
 
     @property
     def grace_seconds(self):
         return self.grace_hours * 3600
 
+    @property
+    def inactive_seconds(self):
+        return self.inactive_days * 86400
+
 
 class FakeJellyfin:
     def __init__(self, users=None, fail_on=None):
         self.users = users or {
-            "examplealpha": JellyfinUser("examplealpha", "jf-a", False, False),
-            "examplebravo": JellyfinUser("examplebravo", "jf-b", True, False),
+            "examplealpha": JellyfinUser("examplealpha", "jf-a", False, False, NOW),
+            "examplebravo": JellyfinUser("examplebravo", "jf-b", True, False, NOW),
         }
         self.calls = []
         self.fail_on = fail_on
@@ -277,3 +283,63 @@ def test_the_summary_counts_every_kind_of_action(harness):
 
     assert "Disabled 1, re-enabled 1, newly absent 1, back 1." in summary
     assert "3 linked Telegram accounts checked (0 unanswered), 3 linked Jellyfin users" in summary
+
+
+# --- the inactivity rule inside a real cycle -----------------------------
+
+def test_an_unused_account_is_disabled_and_the_owner_is_told(harness):
+    harness.ctx.config.inactive_days = 365
+    harness.jellyfin.users["examplealpha"] = JellyfinUser(
+        "examplealpha", "jf-a", False, False, NOW - 400 * 86400
+    )
+
+    summary = cycle(harness)
+
+    assert harness.jellyfin.calls == [("jf-a", True)]
+    assert harness.notes == [
+        f"examplealpha has not used Jellyfin since "
+        f"{JellyfinUser('x', 'y', False, False, NOW - 400 * 86400).last_used_date}, account disabled"
+    ]
+    state = db.get_states(harness.ctx.conn)["examplealpha"]
+    assert state.disabled_reason == "inactive"
+    assert state.inactive_mark == NOW - 400 * 86400
+    assert "Inactivity: 1 past the threshold" in summary
+
+
+def test_an_account_with_no_recorded_use_is_counted_not_disabled(harness):
+    harness.ctx.config.inactive_days = 365
+    harness.jellyfin.users["examplealpha"] = JellyfinUser("examplealpha", "jf-a", False, False, None)
+
+    summary = cycle(harness)
+
+    assert harness.jellyfin.calls == []
+    assert "0 past the threshold, 1 with no recorded use" in summary
+    assert db.get_setting(harness.ctx.conn, "last_no_record") == "1"
+
+
+def test_a_dry_run_reports_the_inactivity_disable_without_making_it(harness):
+    harness.ctx.config.inactive_days = 365
+    harness.ctx.config.dry_run = True
+    harness.jellyfin.users["examplealpha"] = JellyfinUser(
+        "examplealpha", "jf-a", False, False, NOW - 400 * 86400
+    )
+
+    cycle(harness)
+
+    assert harness.jellyfin.calls == []
+    assert harness.notes[0].endswith("account would be disabled")
+    assert db.get_states(harness.ctx.conn) == {}
+
+
+def test_an_exempt_account_survives_both_rules_in_a_real_cycle(harness):
+    harness.ctx.config.inactive_days = 365
+    harness.ctx.config.exempt_users = frozenset({"examplealpha"})
+    harness.jellyfin.users["examplealpha"] = JellyfinUser(
+        "examplealpha", "jf-a", False, False, NOW - 400 * 86400
+    )
+    db.add_link(harness.ctx.conn, "222", "examplealpha")
+    db.set_absent_since(harness.ctx.conn, "examplealpha", NOW - GRACE)
+
+    cycle(harness)
+
+    assert harness.jellyfin.calls == []

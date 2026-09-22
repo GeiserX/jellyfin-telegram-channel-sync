@@ -39,7 +39,20 @@ async def run_cycle(ctx: bot.BotContext) -> str:
         grace_seconds=ctx.config.grace_seconds,
         channel_title=ctx.channel_title,
         dry_run=dry_run,
+        inactive_seconds=ctx.config.inactive_seconds,
+        exempt=ctx.config.exempt_users,
     )
+
+    past_threshold, no_record = sync.inactive_users(
+        jellyfin_users, now, ctx.config.inactive_seconds, ctx.config.exempt_users
+    )
+    db.set_setting(ctx.conn, "last_inactive", str(len(past_threshold)))
+    db.set_setting(ctx.conn, "last_no_record", str(no_record))
+    if no_record:
+        log.info(
+            "%d enabled accounts have no recorded use, so the inactivity rule cannot judge them",
+            no_record,
+        )
 
     counts: dict[str, int] = {}
     for action in actions:
@@ -61,7 +74,8 @@ async def run_cycle(ctx: bot.BotContext) -> str:
         f"{len(linked_ids)} linked Telegram accounts checked ({unknown} unanswered), "
         f"{len(links)} linked Jellyfin users. "
         f"Disabled {counts.get(sync.DISABLE, 0)}, re-enabled {counts.get(sync.ENABLE, 0)}, "
-        f"newly absent {counts.get(sync.MARK_ABSENT, 0)}, back {counts.get(sync.CLEAR_ABSENT, 0)}."
+        f"newly absent {counts.get(sync.MARK_ABSENT, 0)}, back {counts.get(sync.CLEAR_ABSENT, 0)}. "
+        f"Inactivity: {len(past_threshold)} past the threshold, {no_record} with no recorded use."
     )
     return summary
 

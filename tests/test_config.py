@@ -117,3 +117,42 @@ def test_a_negative_grace_is_refused():
 def test_a_grace_of_zero_is_allowed():
     # Disable on the cycle after the first absence. A deliberate choice.
     assert config.load_config({**BASE_ENV, "GRACE_HOURS": "0"}).grace_hours == 0
+
+
+# --- the second rule's settings ------------------------------------------
+
+def test_the_inactivity_rule_defaults_to_a_year():
+    cfg = config.load_config(dict(BASE_ENV))
+    assert cfg.inactive_days == 365
+    assert cfg.inactive_seconds == 365 * 86400
+    assert cfg.exempt_users == frozenset()
+
+
+def test_zero_days_switches_the_inactivity_rule_off():
+    cfg = config.load_config({**BASE_ENV, "INACTIVE_DAYS": "0"})
+    assert cfg.inactive_seconds == 0
+
+
+def test_a_negative_inactivity_window_is_refused():
+    with pytest.raises(config.ConfigError, match="INACTIVE_DAYS"):
+        config.load_config({**BASE_ENV, "INACTIVE_DAYS": "-1"})
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, frozenset()),
+        ("", frozenset()),
+        ("   ", frozenset()),
+        ("Family", frozenset({"family"})),
+        (" Family , TestAcct ,", frozenset({"family", "testacct"})),
+        (",,", frozenset()),
+    ],
+)
+def test_exempt_users_parsing(raw, expected):
+    assert config.parse_exempt(raw) == expected
+
+
+def test_exempt_users_reach_the_config():
+    cfg = config.load_config({**BASE_ENV, "EXEMPT_USERS": "Family,TestAcct"})
+    assert cfg.exempt_users == frozenset({"family", "testacct"})

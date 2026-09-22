@@ -1,6 +1,7 @@
 """Bot commands, and the gate that keeps everyone but the owner out."""
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 
 import pytest
@@ -20,6 +21,12 @@ class FakeConfig:
     grace_hours: int = 72
     interval: int = 3600
     threshold_entries: int = 100
+    inactive_days: int = 365
+    exempt_users: frozenset = frozenset()
+
+    @property
+    def inactive_seconds(self):
+        return self.inactive_days * 86400
 
 
 class FakeJellyfin:
@@ -393,3 +400,63 @@ def test_the_owner_receives_every_part_of_a_long_report(ctx):
     assert len(event.replies) > 1
     assert all(len(reply) <= bot.MESSAGE_LIMIT for reply in event.replies)
     assert "exampleuser399" in "\n".join(event.replies)
+
+
+# --- the second rule, from the owner's chat ------------------------------
+
+def stale_users(days=400):
+    from app.jellyfin import JellyfinUser
+
+    now = int(time.time())
+    return {
+        "examplealpha": JellyfinUser("examplealpha", "jf-a", False, False, now - days * 86400),
+        "examplebravo": JellyfinUser("examplebravo", "jf-b", False, False, now - 10),
+        "exampleblank": JellyfinUser("exampleblank", "jf-c", False, False, None),
+        "exampleadmin": JellyfinUser("exampleadmin", "jf-admin", False, True, now - days * 86400),
+    }
+
+
+def test_inactive_lists_the_accounts_past_the_threshold(ctx):
+    ctx.jellyfin.users = stale_users()
+    reply = say(ctx, "/inactive")
+    assert "1 enabled accounts unused for 365 days or more" in reply
+    assert "examplealpha - last used" in reply
+    assert "examplebravo" not in reply
+    assert "exampleadmin" not in reply
+    assert "1 enabled accounts have no recorded use" in reply
+
+
+def test_inactive_when_everybody_is_recent(ctx):
+    from app.jellyfin import JellyfinUser
+
+    ctx.jellyfin.users = {
+        "examplealpha": JellyfinUser("examplealpha", "jf-a", False, False, int(time.time()))
+    }
+    assert say(ctx, "/inactive") == "No enabled account is more than 365 days unused."
+
+
+def test_inactive_respects_the_exemptions(ctx):
+    ctx.jellyfin.users = stale_users()
+    ctx.config.exempt_users = frozenset({"examplealpha"})
+    assert say(ctx, "/inactive").startswith("No enabled account is more than 365 days unused.")
+
+
+def test_inactive_says_so_when_the_rule_is_off(ctx):
+    ctx.config.inactive_days = 0
+    assert say(ctx, "/inactive") == "The inactivity rule is off. Set INACTIVE_DAYS to switch it on."
+
+
+def test_status_reports_the_inactivity_numbers(ctx):
+    db.set_setting(ctx.conn, "last_inactive", "3")
+    db.set_setting(ctx.conn, "last_no_record", "7")
+    reply = say(ctx, "/status")
+    assert "Inactivity rule: 365 days, 3 past the threshold, 7 with no recorded use" in reply
+
+
+def test_status_says_when_the_inactivity_rule_is_off(ctx):
+    ctx.config.inactive_days = 0
+    assert "Inactivity rule: off" in say(ctx, "/status")
+
+
+def test_help_mentions_the_new_command(ctx):
+    assert "/inactive" in say(ctx, "/help")

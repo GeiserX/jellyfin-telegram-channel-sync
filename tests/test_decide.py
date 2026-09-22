@@ -12,13 +12,25 @@ from app import sync
 from app.db import UserState
 from app.jellyfin import JellyfinUser
 
-NOW = 1_000_000
+NOW = 1_780_000_000  # a real clock: epoch 0 must look ancient, not recent
 GRACE = 72 * 3600
 CHANNEL = "ExampleChannel"
 
 
-def user(name="examplename", disabled=False, admin=False, user_id="jf-1"):
-    return JellyfinUser(name=name, id=user_id, disabled=disabled, is_administrator=admin)
+YEAR = 365 * 86400
+
+
+def day(epoch):
+    """The date string the notification will carry."""
+    import datetime as dt
+
+    return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def user(name="examplename", disabled=False, admin=False, user_id="jf-1", last_used=NOW):
+    return JellyfinUser(
+        name=name, id=user_id, disabled=disabled, is_administrator=admin, last_used=last_used
+    )
 
 
 def seen(present=(), absent=(), unknown=()):
@@ -37,6 +49,8 @@ def run(
     states=None,
     now=NOW,
     dry_run=False,
+    inactive_seconds=0,
+    exempt=frozenset(),
 ):
     return sync.decide(
         links_by_user=links if links is not None else {"examplename": {"111"}},
@@ -47,6 +61,8 @@ def run(
         grace_seconds=GRACE,
         channel_title=CHANNEL,
         dry_run=dry_run,
+        inactive_seconds=inactive_seconds,
+        exempt=exempt,
     )
 
 
@@ -344,12 +360,15 @@ def test_a_release_is_ordered_before_the_disable_that_reclaims_it():
     assert kinds(actions) == [sync.RELEASE, sync.DISABLE]
 
 
-def test_an_administrator_with_a_stale_claim_is_still_left_alone():
+def test_an_administrator_with_a_stale_claim_has_it_dropped():
+    # Nothing is written to Jellyfin for an administrator. Dropping the claim
+    # is bookkeeping, and leaving it in place would make the claim come back
+    # the day the account is demoted.
     actions = run(
         users={"examplename": user(admin=True)},
         states={"examplename": UserState(disabled_by_us=True)},
     )
-    assert actions == []
+    assert kinds(actions) == [sync.RELEASE]
 
 
 # --- what we know about each linked account, and what we do not ----------
@@ -433,3 +452,247 @@ def test_a_multi_id_user_is_disabled_only_when_every_id_is_out():
         states={"examplename": UserState(absent_since=NOW - GRACE - 1)},
     )
     assert kinds(actions) == [sync.DISABLE]
+
+
+# --- the second rule: a year without use ---------------------------------
+
+def stale(days=400, **kwargs):
+    return user(last_used=NOW - days * 86400, **kwargs)
+
+
+def test_an_account_unused_past_the_threshold_is_disabled():
+    actions = run(users={"examplename": stale()}, inactive_seconds=YEAR)
+    assert kinds(actions) == [sync.DISABLE]
+    assert actions[0].reason == "inactive"
+    assert actions[0].notify == (
+        f"examplename has not used Jellyfin since {day(NOW - 400 * 86400)}, account disabled"
+    )
+
+
+def test_an_account_used_inside_the_threshold_is_left_alone():
+    actions = run(users={"examplename": stale(days=300)}, inactive_seconds=YEAR)
+    assert actions == []
+
+
+def test_the_inactivity_boundary_itself_disables():
+    actions = run(users={"examplename": stale(days=365)}, inactive_seconds=YEAR)
+    assert kinds(actions) == [sync.DISABLE]
+
+
+def test_an_account_with_no_recorded_use_is_never_disabled():
+    # Missing data is not a year of silence.
+    actions = run(users={"examplename": user(last_used=None)}, inactive_seconds=YEAR)
+    assert actions == []
+
+
+def test_the_rule_does_nothing_when_it_is_switched_off():
+    assert run(users={"examplename": stale()}, inactive_seconds=0) == []
+
+
+def test_an_already_disabled_account_is_not_disabled_again():
+    actions = run(users={"examplename": stale(disabled=True)}, inactive_seconds=YEAR)
+    assert actions == []
+
+
+def test_an_inactive_administrator_is_left_alone():
+    actions = run(users={"examplename": stale(admin=True)}, inactive_seconds=YEAR)
+    assert actions == []
+
+
+def test_an_exempt_account_is_left_alone():
+    actions = run(
+        users={"examplename": stale()}, inactive_seconds=YEAR, exempt=frozenset({"examplename"})
+    )
+    assert actions == []
+
+
+def test_the_exemption_ignores_case():
+    actions = run(
+        users={"ExampleName": stale(name="ExampleName")},
+        links={},
+        inactive_seconds=YEAR,
+        exempt=frozenset({"examplename"}),
+    )
+    assert actions == []
+
+
+def test_an_exempt_account_is_also_safe_from_the_channel_rule():
+    actions = run(
+        presence=seen(absent=["111"]),
+        states={"examplename": UserState(absent_since=NOW - GRACE - 1)},
+        exempt=frozenset({"examplename"}),
+    )
+    assert actions == []
+
+
+def test_an_unlinked_account_is_still_subject_to_the_inactivity_rule():
+    # This rule does not care about Telegram at all.
+    actions = run(links={}, users={"examplename": stale()}, inactive_seconds=YEAR)
+    assert kinds(actions) == [sync.DISABLE]
+
+
+def test_a_dry_run_only_changes_the_wording():
+    actions = run(users={"examplename": stale()}, inactive_seconds=YEAR, dry_run=True)
+    assert actions[0].notify.endswith("account would be disabled")
+
+
+# --- how the two rules meet ----------------------------------------------
+
+def test_an_account_that_trips_both_rules_is_disabled_once_for_leaving():
+    actions = run(
+        presence=seen(absent=["111"]),
+        users={"examplename": stale()},
+        states={"examplename": UserState(absent_since=NOW - GRACE - 1)},
+        inactive_seconds=YEAR,
+    )
+    assert kinds(actions) == [sync.DISABLE]
+    assert actions[0].reason == "left_channel"
+
+
+def test_an_inactive_account_is_not_revived_by_walking_back_into_the_channel():
+    actions = run(
+        presence=seen(present=["111"]),
+        users={"examplename": stale(disabled=True)},
+        states={"examplename": UserState(disabled_by_us=True, disabled_reason="inactive")},
+        inactive_seconds=YEAR,
+    )
+    assert actions == []
+
+
+def test_an_account_disabled_for_leaving_is_still_revived_by_presence():
+    actions = run(
+        presence=seen(present=["111"]),
+        users={"examplename": user(disabled=True)},
+        states={"examplename": UserState(disabled_by_us=True, disabled_reason="left_channel")},
+    )
+    assert kinds(actions) == [sync.ENABLE]
+
+
+def test_a_claim_with_no_recorded_reason_is_still_revived():
+    # 1.x rows migrate with a reason, but an unset one must not strand anybody.
+    actions = run(
+        presence=seen(present=["111"]),
+        users={"examplename": user(disabled=True)},
+        states={"examplename": UserState(disabled_by_us=True)},
+    )
+    assert kinds(actions) == [sync.ENABLE]
+
+
+# --- not fighting an administrator who re-enables an account -------------
+
+def test_the_rule_does_not_re_disable_what_a_human_switched_back_on():
+    stale_user = stale()
+    actions = run(
+        links={},
+        users={"examplename": stale_user},
+        states={
+            "examplename": UserState(disabled_by_us=False, inactive_mark=stale_user.last_used)
+        },
+        inactive_seconds=YEAR,
+    )
+    assert actions == []
+
+
+def test_the_rule_fires_again_once_the_account_is_used_and_goes_quiet_again():
+    stale_user = stale(days=400)
+    actions = run(
+        links={},
+        users={"examplename": stale_user},
+        states={"examplename": UserState(inactive_mark=NOW - 500 * 86400)},
+        inactive_seconds=YEAR,
+    )
+    assert kinds(actions) == [sync.DISABLE]
+
+
+def test_a_hand_re_enabled_inactive_account_still_has_its_claim_released():
+    actions = run(
+        links={},
+        users={"examplename": stale()},
+        states={
+            "examplename": UserState(
+                disabled_by_us=True, disabled_reason="inactive", inactive_mark=NOW - 400 * 86400
+            )
+        },
+        inactive_seconds=YEAR,
+    )
+    assert kinds(actions) == [sync.RELEASE]
+
+
+def test_a_stale_claim_is_released_on_an_unlinked_account_too():
+    # The release check must not live behind the links loop.
+    actions = run(links={}, states={"examplename": UserState(disabled_by_us=True)})
+    assert kinds(actions) == [sync.RELEASE]
+
+
+# --- the report behind /inactive -----------------------------------------
+
+def test_inactive_users_lists_the_ones_past_the_threshold_and_counts_the_rest():
+    users = {
+        "examplestale": stale(name="examplestale"),
+        "examplefresh": user("examplefresh", last_used=NOW - 10),
+        "exampleblank": user("exampleblank", last_used=None),
+        "exampleadmin": stale(name="exampleadmin", admin=True),
+        "exampleoff": stale(name="exampleoff", disabled=True),
+        "exampleexempt": stale(name="exampleexempt"),
+    }
+    past, no_record = sync.inactive_users(users, NOW, YEAR, frozenset({"exampleexempt"}))
+    assert past == [("examplestale", day(NOW - 400 * 86400))]
+    assert no_record == 1
+
+
+def test_inactive_users_reports_nothing_when_the_rule_is_off():
+    past, no_record = sync.inactive_users({"examplename": stale()}, NOW, 0)
+    assert past == []
+    assert no_record == 0
+
+
+# --- a claim must not be frozen by an exemption ---------------------------
+
+def test_an_exempt_account_with_a_stale_claim_has_it_dropped():
+    # We disabled this account, then it was exempted and re-enabled by hand.
+    # Keeping the claim would revive it the day the exemption is lifted.
+    actions = run(
+        links={},
+        users={"examplename": stale()},
+        states={"examplename": UserState(disabled_by_us=True, disabled_reason="inactive")},
+        inactive_seconds=YEAR,
+        exempt=frozenset({"examplename"}),
+    )
+    assert kinds(actions) == [sync.RELEASE]
+
+
+def test_dropping_an_exempt_claim_is_the_only_thing_that_happens():
+    # The account is linked, absent past the grace window, and a year unused.
+    # Exempt means exempt: no disable from either rule.
+    actions = run(
+        presence=seen(absent=["111"]),
+        users={"examplename": stale()},
+        states={
+            "examplename": UserState(absent_since=NOW - GRACE - 1, disabled_by_us=True)
+        },
+        inactive_seconds=YEAR,
+        exempt=frozenset({"examplename"}),
+    )
+    assert kinds(actions) == [sync.RELEASE]
+
+
+def test_an_exempt_account_that_is_still_disabled_keeps_its_claim():
+    # We really did disable it. Nothing to reconcile until a human enables it.
+    actions = run(
+        links={},
+        users={"examplename": stale(disabled=True)},
+        states={"examplename": UserState(disabled_by_us=True, disabled_reason="inactive")},
+        inactive_seconds=YEAR,
+        exempt=frozenset({"examplename"}),
+    )
+    assert actions == []
+
+
+def test_an_exempt_account_with_no_claim_produces_nothing():
+    actions = run(
+        links={},
+        users={"examplename": stale()},
+        inactive_seconds=YEAR,
+        exempt=frozenset({"examplename"}),
+    )
+    assert actions == []
