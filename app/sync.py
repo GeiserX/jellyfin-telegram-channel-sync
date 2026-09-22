@@ -149,17 +149,22 @@ def decide(
     }
 
     for jellyfin_user, user in jellyfin_users.items():
-        if _off_limits(user, exempt):
-            continue
         state = states.get(jellyfin_user, db.UserState())
 
         if state.disabled_by_us and not user.disabled:
             # Somebody re-enabled the account by hand. Stop claiming it, or a
             # later human disable would be undone on the next cycle.
+            #
+            # This runs before the exemption check on purpose. Exempting an
+            # account, or promoting it to administrator, must not freeze a
+            # claim in place: the claim would come back to life the day the
+            # exemption is lifted. Releasing writes nothing to Jellyfin.
             actions.append(
                 Action(RELEASE, jellyfin_user, user.id, detail="re-enabled outside this service")
             )
 
+        if _off_limits(user, exempt):
+            continue
         if not inactive_seconds or user.disabled or jellyfin_user in disabled_this_cycle:
             continue
         if user.last_used is None:

@@ -360,12 +360,15 @@ def test_a_release_is_ordered_before_the_disable_that_reclaims_it():
     assert kinds(actions) == [sync.RELEASE, sync.DISABLE]
 
 
-def test_an_administrator_with_a_stale_claim_is_still_left_alone():
+def test_an_administrator_with_a_stale_claim_has_it_dropped():
+    # Nothing is written to Jellyfin for an administrator. Dropping the claim
+    # is bookkeeping, and leaving it in place would make the claim come back
+    # the day the account is demoted.
     actions = run(
         users={"examplename": user(admin=True)},
         states={"examplename": UserState(disabled_by_us=True)},
     )
-    assert actions == []
+    assert kinds(actions) == [sync.RELEASE]
 
 
 # --- what we know about each linked account, and what we do not ----------
@@ -641,3 +644,55 @@ def test_inactive_users_reports_nothing_when_the_rule_is_off():
     past, no_record = sync.inactive_users({"examplename": stale()}, NOW, 0)
     assert past == []
     assert no_record == 0
+
+
+# --- a claim must not be frozen by an exemption ---------------------------
+
+def test_an_exempt_account_with_a_stale_claim_has_it_dropped():
+    # We disabled this account, then it was exempted and re-enabled by hand.
+    # Keeping the claim would revive it the day the exemption is lifted.
+    actions = run(
+        links={},
+        users={"examplename": stale()},
+        states={"examplename": UserState(disabled_by_us=True, disabled_reason="inactive")},
+        inactive_seconds=YEAR,
+        exempt=frozenset({"examplename"}),
+    )
+    assert kinds(actions) == [sync.RELEASE]
+
+
+def test_dropping_an_exempt_claim_is_the_only_thing_that_happens():
+    # The account is linked, absent past the grace window, and a year unused.
+    # Exempt means exempt: no disable from either rule.
+    actions = run(
+        presence=seen(absent=["111"]),
+        users={"examplename": stale()},
+        states={
+            "examplename": UserState(absent_since=NOW - GRACE - 1, disabled_by_us=True)
+        },
+        inactive_seconds=YEAR,
+        exempt=frozenset({"examplename"}),
+    )
+    assert kinds(actions) == [sync.RELEASE]
+
+
+def test_an_exempt_account_that_is_still_disabled_keeps_its_claim():
+    # We really did disable it. Nothing to reconcile until a human enables it.
+    actions = run(
+        links={},
+        users={"examplename": stale(disabled=True)},
+        states={"examplename": UserState(disabled_by_us=True, disabled_reason="inactive")},
+        inactive_seconds=YEAR,
+        exempt=frozenset({"examplename"}),
+    )
+    assert actions == []
+
+
+def test_an_exempt_account_with_no_claim_produces_nothing():
+    actions = run(
+        links={},
+        users={"examplename": stale()},
+        inactive_seconds=YEAR,
+        exempt=frozenset({"examplename"}),
+    )
+    assert actions == []
