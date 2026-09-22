@@ -1,139 +1,160 @@
-import os
-import sqlite3
-import requests
-import time
-from telethon.sync import TelegramClient
+"""The decision logic.
 
-api_id = os.getenv('TELEGRAM_API_ID')
-api_hash = os.getenv('TELEGRAM_API_HASH')
-channel_username = int(os.getenv('TELEGRAM_CHANNEL'))
-threshold_guardrail=int(os.getenv('THRESHOLD_ENTRIES'))
+:func:`decide` is a pure function over plain data: links, the channel
+participant set, current Jellyfin state and the clock in, a list of actions
+out. Nothing in here talks to Telegram, Jellyfin or SQLite, which is what
+makes the whole policy testable.
+"""
 
-jellyfin_url = os.getenv('JELLYFIN_URL')
-jellyfin_api_key = os.getenv('JELLYFIN_API_KEY')
+from __future__ import annotations
 
-interval = int(os.getenv('SCRIPT_INTERVAL', '3600'))
+from dataclasses import dataclass
 
-db_file = '/app/data/jellyfin_users.db'
-telegram_session_file = '/app/data/session_name'
+from . import db
+from .jellyfin import JellyfinUser
 
-jf_headers = {'X-Emby-Token': jellyfin_api_key}
+DISABLE = "disable"
+ENABLE = "enable"
+MARK_ABSENT = "mark_absent"
+CLEAR_ABSENT = "clear_absent"
 
-def get_jellyfin_users():
-    resp = requests.get(f'{jellyfin_url}/Users', headers=jf_headers)
-    resp.raise_for_status()
-    users = resp.json()
-    return {user['Name']: {'Id': user['Id'], 'IsDisabled': user['Policy']['IsDisabled']}
-            for user in users if user['Name'].lower() != 'root'}
 
-def set_jellyfin_user_enabled(user_id, username, enabled_state):
-    url = f'{jellyfin_url}/Users/{user_id}/Policy'
-    resp = requests.post(url, headers=jf_headers, json={"IsDisabled": not enabled_state})
-    if resp.status_code == 204:
-        print(f"✅ Jellyfin user '{username}' set enabled={enabled_state}.")
-    else:
-        print(f"🚨 Error setting '{username}': {resp.status_code} {resp.text}")
+@dataclass(frozen=True)
+class Action:
+    kind: str
+    jellyfin_user: str
+    user_id: str | None = None
+    notify: str | None = None
+    detail: str = ""
 
-def fetch_telegram_users():
-    client = TelegramClient(telegram_session_file, api_id, api_hash)
-    client.connect()
-    if not client.is_user_authorized():
-        print("Telegram client is not authorized! Check your session file.")
-        client.disconnect()
-        exit(1)
-    print("Fetching Participants...")
-    
-    participants = client.get_participants(channel_username, aggressive=True)
 
-    telegram_users = {}
-    for user in participants:
-        telegram_users[str(user.id)] = {
-            "username": user.username or "",
-            "first_name": user.first_name or "",
-            "last_name": user.last_name or ""
-        }
-    num_users = len(telegram_users)
-    print(f"Processed {num_users} Participants.")
+def _sort_key(action: Action) -> tuple[str, str]:
+    return (action.jellyfin_user, action.kind)
 
-    if num_users < threshold_guardrail:  # your safety threshold (adjust to your group size if needed)
-        print(f"🚨 Too few Telegram users fetched ({num_users}); probably an API or connection issue. Skip disabling users this run.")
-        return None # return None for detection later
 
-    client.disconnect()
-    return telegram_users
+def decide(
+    links_by_user: dict[str, set[str]],
+    participants: set[str] | None,
+    jellyfin_users: dict[str, JellyfinUser],
+    states: dict[str, db.UserState],
+    now: int,
+    grace_seconds: int,
+    channel_title: str,
+    dry_run: bool = False,
+) -> list[Action]:
+    """Decide what should happen this cycle.
 
-def main():
-    print("\n*** Starting Main Sync Loop ***\n")
-    jellyfin_users = get_jellyfin_users()
-    print("Fetched Jellyfin users.\n")
+    ``participants`` is ``None`` when the member list could not be trusted
+    (the threshold guardrail tripped). In that case nothing happens at all --
+    an unreliable fetch must never disable anybody.
+    """
+    if participants is None:
+        return []
 
-    conn = sqlite3.connect(db_file)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT ID, JellyfinUser, Enabled FROM users")
-    rows = cursor.fetchall()
-    print(f"Loaded DB successfully. {len(rows)} total users in DB.\n")
-
-    telegram_users_present = fetch_telegram_users()
-    telegram_ids_present = set(telegram_users_present.keys())
-
-    known_telegram_ids = set()
-    updated_db = False
-
-    for row in rows:
-        jf_user = row['JellyfinUser']
-        db_ids_raw = row['ID']
-        db_ids = set(db_ids_raw.strip().split()) if db_ids_raw else set()
-
-        # 👇 DEBUGGING LOG - explicitly log all DB IDs for each user
-        print(f"\n👤 Checking DB user '{jf_user}': DB IDs: {db_ids}")
-
-        if not db_ids:
-            print(f"⚠️ User '{jf_user}' has no Telegram IDs in DB; skipping check.")
+    actions: list[Action] = []
+    for jellyfin_user, telegram_ids in links_by_user.items():
+        user = jellyfin_users.get(jellyfin_user)
+        if user is None:
+            # Linked to a Jellyfin account that no longer exists.
+            continue
+        if user.is_administrator:
+            # Administrators are never touched, linked or not.
             continue
 
-        user_present_in_channel = bool(db_ids & telegram_ids_present)
+        state = states.get(jellyfin_user, db.UserState())
+        present = bool(telegram_ids & participants)
 
-        if bool(row['Enabled']) != user_present_in_channel:
-            action_str = 'ENABLED ✅' if user_present_in_channel else 'DISABLED ⛔'
-            print(f"➡️ Status change for '{jf_user}': {bool(row['Enabled'])} → {user_present_in_channel} ({action_str})")
+        if present:
+            if state.absent_since is not None:
+                actions.append(
+                    Action(CLEAR_ABSENT, jellyfin_user, user.id, detail="back in the channel")
+                )
+            if user.disabled and state.disabled_by_us:
+                verb = "would be re-enabled" if dry_run else "re-enabled"
+                actions.append(
+                    Action(
+                        ENABLE,
+                        jellyfin_user,
+                        user.id,
+                        notify=f"{jellyfin_user} rejoined {channel_title}, account {verb}",
+                        detail="present in the channel",
+                    )
+                )
+            continue
 
-            cursor.execute("UPDATE users SET Enabled = ? WHERE JellyfinUser = ?", (int(user_present_in_channel), jf_user))
-            conn.commit()
-            updated_db = True
+        # Absent from the channel.
+        if user.disabled:
+            # Already disabled, by us or by an administrator: leave it alone.
+            continue
+        if state.absent_since is None:
+            actions.append(
+                Action(MARK_ABSENT, jellyfin_user, user.id, detail=f"first seen absent at {now}")
+            )
+            continue
+        if now - state.absent_since >= grace_seconds:
+            verb = "would be disabled" if dry_run else "disabled"
+            actions.append(
+                Action(
+                    DISABLE,
+                    jellyfin_user,
+                    user.id,
+                    notify=f"{jellyfin_user} left {channel_title}, account {verb}",
+                    detail=f"absent since {state.absent_since}, grace {grace_seconds}s elapsed",
+                )
+            )
 
-            if jf_user in jellyfin_users:
-                set_jellyfin_user_enabled(jellyfin_users[jf_user]['Id'], jf_user, user_present_in_channel)
-        else:
-            print(f"🔸 No change for '{jf_user}' (Enabled={bool(row['Enabled'])}).")
+    return sorted(actions, key=_sort_key)
 
-        known_telegram_ids.update(db_ids)
 
-    unknown_tg_ids = telegram_ids_present - known_telegram_ids
-    if unknown_tg_ids:
-        print('\n🚨 Unrecognized Telegram users (ADD TO DB):')
-        for uid in unknown_tg_ids:
-            user = telegram_users_present[uid]
-            name = f"{user['first_name']} {user['last_name']}".strip() or user['username'] or "NoName"
-            username = f"@{user['username']}" if user['username'] else "No Username"
-            print(f" - ID: {uid}, Name: {name}, Username: {username}")
-    else:
-        print("\n✅ No unknown Telegram IDs.\n")
+def unknown_participants(
+    links: dict[str, str], participants_info: dict[str, dict]
+) -> list[dict]:
+    """Channel members with no link, newest id last."""
+    return [
+        {"id": telegram_id, **info}
+        for telegram_id, info in sorted(participants_info.items())
+        if telegram_id not in links
+    ]
 
-    if not updated_db:
-        print("ℹ️ No DB updates this run.\n")
 
-    conn.close()
+def unlinked_jellyfin_users(
+    links_by_user: dict[str, set[str]], jellyfin_users: dict[str, JellyfinUser]
+) -> list[str]:
+    """Enabled, non-administrator Jellyfin accounts nobody is linked to."""
+    return sorted(
+        name
+        for name, user in jellyfin_users.items()
+        if not user.is_administrator and not user.disabled and name not in links_by_user
+    )
 
-def main_loop():
-    while True:
-        try:
-            print("\n==== Starting user synchronization... ====")
-            main()
-        except Exception as e:
-            print(f"An error occurred: {e}")
-        print(f"==== Sync complete. Sleeping {interval} seconds. ====\n")
-        time.sleep(interval)
 
-if __name__ == "__main__":
-    main_loop()
+def apply_action(conn, jellyfin_client, action: Action, dry_run: bool, now: int) -> None:
+    """Persist and perform one action. In dry run no Jellyfin account changes.
+
+    Absence bookkeeping still runs in dry run, so the grace clock is real and
+    the "would be disabled" message arrives when it really would have.
+    """
+    if action.kind == MARK_ABSENT:
+        db.set_absent_since(conn, action.jellyfin_user, now)
+    elif action.kind == CLEAR_ABSENT:
+        db.set_absent_since(conn, action.jellyfin_user, None)
+    elif action.kind == DISABLE:
+        if not dry_run:
+            jellyfin_client.set_user_disabled(action.user_id, True)
+            db.set_disabled_by_us(conn, action.jellyfin_user, True)
+    elif action.kind == ENABLE:
+        if not dry_run:
+            jellyfin_client.set_user_disabled(action.user_id, False)
+            db.set_disabled_by_us(conn, action.jellyfin_user, False)
+            db.set_absent_since(conn, action.jellyfin_user, None)
+    else:  # pragma: no cover - guarded by the action constants
+        raise ValueError(f"unknown action {action.kind!r}")
+
+    db.record_audit(
+        conn,
+        action.kind,
+        action.jellyfin_user,
+        action.detail,
+        dry_run=dry_run and action.kind in (DISABLE, ENABLE),
+        now=now,
+    )

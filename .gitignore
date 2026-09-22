@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+.venv/
+venv/
+data/
+*.session
+*.session-journal
