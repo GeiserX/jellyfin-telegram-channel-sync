@@ -21,15 +21,31 @@ You say who is who from a Telegram bot, in your own private chat with it. The bo
 
 Every cycle asks the bot about each linked Telegram account in turn, reads what Jellyfin thinks right now, and reads what this service did last time. Then, for each Jellyfin user you have linked:
 
-- **In the channel.** Nothing happens, unless the account is disabled *and this service is the one that disabled it*, in which case it is enabled again.
+- **In the channel.** Nothing happens, unless the account is disabled *and this service is the one that disabled it for leaving*, in which case it is enabled again.
 - **Not in the channel.** A clock starts. Once the account has been missing for `GRACE_HOURS` (default 72), the service disables it and messages you. The clock lives in the database, so restarting the container does not reset it.
 - **No answer from Telegram.** Nothing happens to that person, this cycle or any cycle until an answer comes back. A timeout, a rate limit, a deleted account and a status Telegram invents next year all mean the same thing: we do not know, and not knowing must never cost somebody their access. `/status` counts how many went unanswered.
 - **Several Telegram accounts on one Jellyfin user.** Present if any one of them is in the channel. Absent only if every one of them is explicitly out. One unanswered account is enough to leave the person alone.
 - **Disabled by a person, not by this service.** Left alone, in both directions. The service only ever undoes its own work, and it drops its claim as soon as somebody re-enables an account by hand.
 - **An administrator.** Never touched, linked or not.
-- **Not linked.** Never touched. A Jellyfin account with no link is invisible to the sync.
+- **Not linked.** The channel rule never touches it. The inactivity rule still does, since that one does not care about Telegram.
+- **Named in `EXEMPT_USERS`.** Never touched by either rule.
 
 `DRY_RUN` is on by default. The messages arrive, the grace clock runs, and no Jellyfin account changes. Leave it on until `/links` looks right. The whole decision is one pure function in [app/sync.py](app/sync.py), so that list is exactly what the tests enumerate.
+
+## Second rule: a year without use
+
+Leaving the channel is not the only way an account goes stale. An account nobody has opened for `INACTIVE_DAYS` (default 365) is disabled too, whether or not it is linked to Telegram.
+
+The clock is the later of Jellyfin's `LastActivityDate` and `LastLoginDate`. If Jellyfin has neither, the account is left alone and counted instead: no recorded use is missing data, not evidence of a year of silence. `/status` and `/inactive` both say how many accounts fall in that bucket.
+
+This rule and the channel rule disable in the same way, but they undo differently:
+
+- **Disabled for leaving the channel.** Enabled again the moment the person is back in the channel.
+- **Disabled for a year of silence.** Stays disabled. Walking back into the channel does not revive it, because being in a Telegram channel is not using Jellyfin. Re-enable it yourself when you want it back, and the daemon drops its claim and will not disable it again until the account has actually been used and then gone quiet for another year.
+
+Set `EXEMPT_USERS` to a comma-separated list of Jellyfin usernames that neither rule may ever touch. Administrators are exempt anyway.
+
+Before switching dry run off, `/inactive` shows you exactly who this rule would catch and when each of them last used the server.
 
 ## Why presence is checked one person at a time
 
@@ -62,7 +78,7 @@ Both sessions are files in `/app/data`, created once by [app/login.py](app/login
 ```yaml
 services:
   jellytelegram-sync:
-    image: drumsergio/jellyfin-telegram-channel-sync:1.2.0
+    image: drumsergio/jellyfin-telegram-channel-sync:1.3.0
     container_name: jellytelegram-sync
     environment:
       - TELEGRAM_API_ID=your_telegram_api_id
@@ -129,7 +145,8 @@ All of these work only in your private chat with the bot, and only for `OWNER_ID
 | `/links` | Every link, grouped by Jellyfin user. |
 | `/unknown` | Channel members with no link: id, name, username. Says how many the listing could see against the channel's real subscriber count. |
 | `/unlinked` | Enabled Jellyfin users with no link. |
-| `/status` | Last sync, link counts, how many are inside the grace window, dry-run state. |
+| `/inactive` | Enabled accounts nobody has used since the threshold, with the date each last used the server. |
+| `/status` | Last sync, link counts, how many are inside the grace window, the inactivity numbers, dry-run state. |
 | `/sync` | Run a cycle now instead of waiting. |
 | `/dryrun on\|off` | Whether changes are really applied. Stored in the database. |
 | `/help` | The list above. |
@@ -154,6 +171,8 @@ The reply says what it saw, for example `The listing saw 208 of 210 subscribers`
 | `THRESHOLD_ENTRIES` | Yes | none | Guardrail on the `/unknown` listing only. If the listing returns fewer than this, `/unknown` refuses to answer rather than showing a misleading list. It no longer gates the sync, which works per person. |
 | `SCRIPT_INTERVAL` | No | `3600` | Seconds between cycles |
 | `GRACE_HOURS` | No | `72` | Hours a member may be missing before the account is disabled |
+| `INACTIVE_DAYS` | No | `365` | Days without using Jellyfin before an account is disabled. `0` switches the rule off. |
+| `EXEMPT_USERS` | No | none | Comma-separated Jellyfin usernames neither rule may touch. Case does not matter. |
 | `DRY_RUN` | No | `true` | Report what would happen without changing anything. `/dryrun` overrides it once set. |
 | `DATA_DIR` | No | `/app/data` | Where the database and both session files live |
 
@@ -170,7 +189,9 @@ There is no longer any reason to edit the database by hand. `/link` does it.
 
 ## What is stored
 
-Everything is one SQLite file, `/app/data/sync.db`, with four tables defined in [app/db.py](app/db.py). `links` holds one row per Telegram id. `user_state` records when someone was first seen missing and whether this service disabled them. `audit` holds one row per action, dry runs included. `settings` holds the `/dryrun` state and the last sync time.
+Everything is one SQLite file, `/app/data/sync.db`, with four tables defined in [app/db.py](app/db.py). `links` holds one row per Telegram id. `user_state` records when someone was first seen missing, whether this service disabled them and why. `audit` holds one row per action, dry runs included. `settings` holds the `/dryrun` state and the last sync time.
+
+Upgrading from 1.x adds the reason column in place and marks everything 1.x had disabled as having left the channel, which is the only thing it could have meant.
 
 ## Troubleshooting
 
@@ -183,6 +204,8 @@ Everything is one SQLite file, `/app/data/sync.db`, with four tables defined in 
 | `/status` shows unanswered membership lookups | The bot is not an administrator of the channel, or Telegram rate-limited the run | Promote the bot to administrator. A rate limit clears itself; nothing is changed while lookups go unanswered. |
 | Jellyfin returns 401 | The API key is wrong, or revoked | Regenerate it. The client authenticates with the `Authorization: MediaBrowser Token=...` header, which Jellyfin 12 requires; the older `X-Emby-Token` is refused. |
 | `/unknown` shows fewer members than the channel has | Telegram caps a broadcast listing at 200 | Expected. Link the rest by id or `@username`; presence is checked per person either way. |
+| An account was disabled for inactivity and is still disabled after rejoining | By design. Being in a Telegram channel is not using Jellyfin. | Re-enable it yourself. The daemon drops its claim and leaves it alone until the account is used and goes quiet again. |
+| Lots of accounts show "no recorded use" | Jellyfin has no `LastActivityDate` or `LastLoginDate` for them | Nothing to do. The inactivity rule never disables on missing data; `/inactive` lists who it can judge. |
 | Nothing is ever disabled | Dry run is still on | `/status` shows it; `/dryrun off` |
 | `Member list came back below THRESHOLD_ENTRIES` | Telegram returned a partial list, or the threshold is too high | This is the guardrail working. Check the threshold against your real member count. |
 | Someone left but is still enabled | The grace window has not elapsed | `/status` shows how many are waiting; lower `GRACE_HOURS` if you want it sooner |

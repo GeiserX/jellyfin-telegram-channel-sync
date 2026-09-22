@@ -1,6 +1,6 @@
 services:
   jellytelegram-sync:
-    image: drumsergio/jellyfin-telegram-channel-sync:1.2.0
+    image: drumsergio/jellyfin-telegram-channel-sync:1.3.0
     container_name: jellytelegram-sync
     environment:
       # Telegram user account (lists the channel members)
@@ -22,6 +22,11 @@ services:
       - SCRIPT_INTERVAL=3600
       # Hours a member may be missing before the account is disabled
       - GRACE_HOURS=72
+      # Days without using Jellyfin before an account is disabled. 0 switches
+      # this rule off
+      - INACTIVE_DAYS=365
+      # Jellyfin usernames neither rule may ever touch, comma separated
+      - EXEMPT_USERS=
       # Start with true; flip to false (or /dryrun off) once the links look right
       - DRY_RUN=true
 
