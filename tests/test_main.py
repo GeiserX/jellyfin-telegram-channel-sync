@@ -64,6 +64,10 @@ def harness(tmp_path, monkeypatch):
     async def participants():
         return {"111": {"username": "exampleone", "name": "Example One"}}
 
+    # 111 is in the channel; every other linked id is out.
+    async def check_presence(ids):
+        return {i: (sync.PRESENT if i == "111" else sync.ABSENT) for i in ids}
+
     ctx = bot.BotContext(
         conn=conn,
         jellyfin=jellyfin,
@@ -73,6 +77,7 @@ def harness(tmp_path, monkeypatch):
         run_cycle=None,
         channel_title="ExampleChannel",
         notify=notify,
+        check_presence=check_presence,
     )
     yield Harness(ctx=ctx, jellyfin=jellyfin, notes=notes)
     conn.close()
@@ -148,19 +153,20 @@ def test_the_stored_dry_run_setting_beats_the_environment(harness):
     assert harness.jellyfin.calls == []
 
 
-def test_an_untrusted_member_list_disables_nobody(harness):
-    async def nothing():
-        return None
+def test_unanswered_lookups_disable_nobody_and_are_counted(harness):
+    async def all_unknown(ids):
+        return {i: sync.UNKNOWN for i in ids}
 
-    harness.ctx.fetch_participants = nothing
+    harness.ctx.check_presence = all_unknown
     db.add_link(harness.ctx.conn, "222", "examplealpha")
     db.set_absent_since(harness.ctx.conn, "examplealpha", NOW - GRACE)
 
     summary = cycle(harness)
 
     assert harness.jellyfin.calls == []
-    assert "THRESHOLD_ENTRIES" in summary
-    assert db.recent_audit(harness.ctx.conn)[0]["action"] == "guardrail"
+    assert "(1 unanswered)" in summary
+    assert db.get_setting(harness.ctx.conn, "last_unknown") == "1"
+    assert db.recent_audit(harness.ctx.conn)[0]["action"] == "unanswered"
     assert db.get_last_sync(harness.ctx.conn) == NOW
 
 
@@ -204,11 +210,11 @@ def test_the_loop_survives_a_failing_cycle_instead_of_exiting(harness):
     # The old code called exit(1) from inside the loop.
     calls = []
 
-    async def exploding():
+    async def exploding(ids):
         calls.append(1)
         raise RuntimeError("Telegram hiccup")
 
-    harness.ctx.fetch_participants = exploding
+    harness.ctx.check_presence = exploding
     asyncio.run(main.periodic(harness.ctx, cycles=3))
 
     assert len(calls) == 3
@@ -230,6 +236,7 @@ def test_build_context_wires_the_cycle_and_the_title(tmp_path, monkeypatch):
 
     config = SimpleNamespace(
         channel=-1001234567890,
+        bot_token="12345:token",
         jellyfin_url="http://jellyfin:8096",
         jellyfin_api_key="fakekey",
         threshold_entries=1,
@@ -250,6 +257,7 @@ def test_build_context_wires_the_cycle_and_the_title(tmp_path, monkeypatch):
     ctx = asyncio.run(main.build_context(config, conn, FakeUserClient(), FakeBotClient()))
 
     assert ctx.channel_title == "ExampleChannel"
+    assert callable(ctx.check_presence)
     assert callable(ctx.run_cycle)
     asyncio.run(ctx.notify("hello"))
     assert sent == [(555000111, "hello")]
@@ -268,4 +276,4 @@ def test_the_summary_counts_every_kind_of_action(harness):
     summary = cycle(harness)
 
     assert "Disabled 1, re-enabled 1, newly absent 1, back 1." in summary
-    assert "1 channel members, 3 linked Jellyfin users" in summary
+    assert "3 linked Telegram accounts checked (0 unanswered), 3 linked Jellyfin users" in summary

@@ -36,6 +36,8 @@ class BotContext:
     resolve_telegram_id: Callable[[str], Awaitable[int]]
     fetch_participants: Callable[[], Awaitable[dict | None]]
     run_cycle: Callable[[], Awaitable[str]]
+    check_presence: Callable[[set], Awaitable[dict]] = None
+    subscriber_count: Callable[[], Awaitable[int | None]] = None
     channel_title: str = "the channel"
     notify: Callable[[str], Awaitable[None]] = field(default=None)
 
@@ -148,15 +150,28 @@ async def _cmd_unknown(ctx: BotContext, args: list[str]) -> str:
     participants = await ctx.fetch_participants()
     if participants is None:
         return "The member list came back below THRESHOLD_ENTRIES, so it is not trustworthy. Try again later."
+
+    total = await ctx.subscriber_count() if ctx.subscriber_count else None
+    seen = len(participants)
+    coverage = f"The listing saw {seen}"
+    if total is not None:
+        coverage += f" of {total} subscribers"
+        if seen < total:
+            coverage += (
+                ". Telegram stops a broadcast listing at 200, so the rest cannot be listed;"
+                " link those people by id or @username"
+            )
+    coverage += "."
+
     unknown = sync.unknown_participants(db.get_links(ctx.conn), participants)
     if not unknown:
-        return "Every channel member is linked."
+        return f"Every member the listing can see is linked. {coverage}"
     lines = [
         f"{member['id']} - {member['name'] or 'no name'}"
         + (f" - @{member['username']}" if member["username"] else "")
         for member in unknown
     ]
-    return f"{len(unknown)} unlinked channel members:\n" + "\n".join(lines)
+    return f"{len(unknown)} unlinked channel members. {coverage}\n" + "\n".join(lines)
 
 
 async def _cmd_unlinked(ctx: BotContext, args: list[str]) -> str:
@@ -180,6 +195,7 @@ async def _cmd_status(ctx: BotContext, args: list[str]) -> str:
             f"Last sync: {_format_timestamp(db.get_last_sync(ctx.conn))}",
             f"Links: {len(links)} Telegram ids across {len(grouped)} Jellyfin users",
             f"Absent, inside the grace window: {len(waiting)}",
+            f"Unanswered membership lookups last cycle: {db.get_setting(ctx.conn, 'last_unknown', '0')}",
             f"Disabled by this service: {len(owned)}",
             f"Dry run: {'on' if dry_run else 'off'}",
             f"Grace: {ctx.config.grace_hours}h, interval: {ctx.config.interval}s,"

@@ -19,27 +19,38 @@ You say who is who from a Telegram bot, in your own private chat with it. The bo
 
 ## How it decides
 
-Every cycle reads three things: who is in the channel, what Jellyfin thinks right now, and what this service did last time. Then, for each Jellyfin user you have linked:
+Every cycle asks the bot about each linked Telegram account in turn, reads what Jellyfin thinks right now, and reads what this service did last time. Then, for each Jellyfin user you have linked:
 
 - **In the channel.** Nothing happens, unless the account is disabled *and this service is the one that disabled it*, in which case it is enabled again.
 - **Not in the channel.** A clock starts. Once the account has been missing for `GRACE_HOURS` (default 72), the service disables it and messages you. The clock lives in the database, so restarting the container does not reset it.
-- **Disabled by a person, not by this service.** Left alone, in both directions. The service only ever undoes its own work.
+- **No answer from Telegram.** Nothing happens to that person, this cycle or any cycle until an answer comes back. A timeout, a rate limit, a deleted account and a status Telegram invents next year all mean the same thing: we do not know, and not knowing must never cost somebody their access. `/status` counts how many went unanswered.
+- **Several Telegram accounts on one Jellyfin user.** Present if any one of them is in the channel. Absent only if every one of them is explicitly out. One unanswered account is enough to leave the person alone.
+- **Disabled by a person, not by this service.** Left alone, in both directions. The service only ever undoes its own work, and it drops its claim as soon as somebody re-enables an account by hand.
 - **An administrator.** Never touched, linked or not.
 - **Not linked.** Never touched. A Jellyfin account with no link is invisible to the sync.
-- **Fewer channel members than `THRESHOLD_ENTRIES`.** The whole cycle is skipped. A partial answer from Telegram must never be read as "everybody left".
 
 `DRY_RUN` is on by default. The messages arrive, the grace clock runs, and no Jellyfin account changes. Leave it on until `/links` looks right. The whole decision is one pure function in [app/sync.py](app/sync.py), so that list is exactly what the tests enumerate.
 
+## Why presence is checked one person at a time
+
+Telegram will not list a broadcast channel past 200 members. Not with `get_participants()`, not with `aggressive=True`, not with `iter_participants(limit=None)`, not with a raw recent-participants request: all of them stop at 200, and the count the server reports alongside them stops there too. On a channel with more subscribers than that, "not in the listing" simply does not mean "left", and reading it that way would disable people at random.
+
+So the decision never touches the listing. For each linked Telegram account, the bot asks Telegram [`getChatMember`](https://core.telegram.org/bots/api#getchatmember), which answers for any user id as long as **the bot is an administrator of the channel**. `creator`, `administrator`, `member` and `restricted` mean the person is in. `left` and `kicked` mean they are out. Anything else, including every error, means we do not know, and nothing happens to them.
+
+That is one request per linked account per cycle, paced with a short pause. At the default hourly interval a few hundred members is well inside Telegram's limits.
+
 ## Why two Telegram sessions
 
-A bot cannot list the members of a broadcast channel. So a **user session**, yours as the channel's creator, reads the member list. The **bot** is a separate client that answers your commands and sends you notifications. It never posts into the channel, and it never answers anyone but you.
+The **bot** answers your commands, sends your notifications, and checks membership. It never posts into the channel, and it never answers anyone but you.
+
+A **user session**, yours as the channel's creator, is still needed for the two things a bot cannot do: listing members to populate `/unknown`, and resolving an `@username` to a numeric id for `/link`.
 
 Both sessions are files in `/app/data`, created once by [app/login.py](app/login.py).
 
 ## Prerequisites
 
 1. **Telegram API credentials.** An `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org).
-2. **A Telegram bot.** Create one with [@BotFather](https://t.me/BotFather) and keep the token.
+2. **A Telegram bot, promoted to administrator of the channel.** Create one with [@BotFather](https://t.me/BotFather), keep the token, then add it to the channel as an administrator. Without that it cannot answer whether somebody is still a member, and every cycle will report unanswered lookups and change nothing.
 3. **Your own numeric Telegram id.** The only account the bot will obey. [@userinfobot](https://t.me/userinfobot) will tell you yours.
 4. **A Jellyfin API key.** Jellyfin dashboard, Administration > API Keys.
 5. **The channel id.** The numeric id (e.g. `-1001234567890`) of the channel you use as the access list. Your user account must be able to list its members.
@@ -51,7 +62,7 @@ Both sessions are files in `/app/data`, created once by [app/login.py](app/login
 ```yaml
 services:
   jellytelegram-sync:
-    image: drumsergio/jellyfin-telegram-channel-sync:1.1.0
+    image: drumsergio/jellyfin-telegram-channel-sync:1.2.0
     container_name: jellytelegram-sync
     environment:
       - TELEGRAM_API_ID=your_telegram_api_id
@@ -116,12 +127,18 @@ All of these work only in your private chat with the bot, and only for `OWNER_ID
 | `/link <telegram_id\|@username> <jellyfin_user>` | Link a Telegram account to a Jellyfin user. The Jellyfin name is checked against the server. |
 | `/unlink <telegram_id>` | Remove one link. |
 | `/links` | Every link, grouped by Jellyfin user. |
-| `/unknown` | Channel members with no link: id, name, username. |
+| `/unknown` | Channel members with no link: id, name, username. Says how many the listing could see against the channel's real subscriber count. |
 | `/unlinked` | Enabled Jellyfin users with no link. |
 | `/status` | Last sync, link counts, how many are inside the grace window, dry-run state. |
 | `/sync` | Run a cycle now instead of waiting. |
 | `/dryrun on\|off` | Whether changes are really applied. Stored in the database. |
 | `/help` | The list above. |
+
+### What `/unknown` can and cannot see
+
+`/unknown` lists channel members who have no link yet. It builds that list from the member listing, so it inherits the 200 cap: a plain listing, plus one name search per letter (a to z, and the accented letters Spanish names use), unioned together. On the channel this was built for that reaches a little past 200, not all the way.
+
+The reply says what it saw, for example `The listing saw 208 of 210 subscribers`. Anyone it cannot see is still perfectly linkable, by numeric id or by `@username`, and once linked they are checked like everybody else. The cap only limits discovery, never the decision.
 
 ## Environment variables
 
@@ -134,7 +151,7 @@ All of these work only in your private chat with the bot, and only for `OWNER_ID
 | `OWNER_ID` | Yes | none | Your numeric Telegram id. The only account the bot obeys. |
 | `JELLYFIN_URL` | Yes | none | Base URL of your Jellyfin server |
 | `JELLYFIN_API_KEY` | Yes | none | Jellyfin API key |
-| `THRESHOLD_ENTRIES` | Yes | none | Skip the cycle if fewer members than this come back. Set it safely below your real member count. |
+| `THRESHOLD_ENTRIES` | Yes | none | Guardrail on the `/unknown` listing only. If the listing returns fewer than this, `/unknown` refuses to answer rather than showing a misleading list. It no longer gates the sync, which works per person. |
 | `SCRIPT_INTERVAL` | No | `3600` | Seconds between cycles |
 | `GRACE_HOURS` | No | `72` | Hours a member may be missing before the account is disabled |
 | `DRY_RUN` | No | `true` | Report what would happen without changing anything. `/dryrun` overrides it once set. |
@@ -163,6 +180,9 @@ Everything is one SQLite file, `/app/data/sync.db`, with four tables defined in 
 | `Configuration error: X is required` | A variable is missing | The message names it; the container exits with code 2 |
 | The bot ignores you | You are not `OWNER_ID`, or you wrote in a group | Check `OWNER_ID`, and write in the private chat |
 | No notifications arrive | Telegram will not let a bot message someone who has never written to it | Send the bot `/start` once |
+| `/status` shows unanswered membership lookups | The bot is not an administrator of the channel, or Telegram rate-limited the run | Promote the bot to administrator. A rate limit clears itself; nothing is changed while lookups go unanswered. |
+| Jellyfin returns 401 | The API key is wrong, or revoked | Regenerate it. The client authenticates with the `Authorization: MediaBrowser Token=...` header, which Jellyfin 12 requires; the older `X-Emby-Token` is refused. |
+| `/unknown` shows fewer members than the channel has | Telegram caps a broadcast listing at 200 | Expected. Link the rest by id or `@username`; presence is checked per person either way. |
 | Nothing is ever disabled | Dry run is still on | `/status` shows it; `/dryrun off` |
 | `Member list came back below THRESHOLD_ENTRIES` | Telegram returned a partial list, or the threshold is too high | This is the guardrail working. Check the threshold against your real member count. |
 | Someone left but is still enabled | The grace window has not elapsed | `/status` shows how many are waiting; lower `GRACE_HOURS` if you want it sooner |

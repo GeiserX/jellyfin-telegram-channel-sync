@@ -20,6 +20,11 @@ MARK_ABSENT = "mark_absent"
 CLEAR_ABSENT = "clear_absent"
 RELEASE = "release"
 
+# What we know about one linked Telegram account this cycle.
+PRESENT = "present"
+ABSENT = "absent"
+UNKNOWN = "unknown"
+
 # Bookkeeping runs before the Jellyfin writes, so that releasing a stale
 # ownership claim cannot undo the claim a disable makes in the same cycle.
 _ORDER = {RELEASE: 0, CLEAR_ABSENT: 1, MARK_ABSENT: 2, ENABLE: 3, DISABLE: 4}
@@ -38,9 +43,24 @@ def _sort_key(action: Action) -> tuple[str, int]:
     return (action.jellyfin_user, _ORDER[action.kind])
 
 
+def presence_of(telegram_ids: set[str], presence: dict[str, str]) -> str:
+    """One verdict for a person who may hold several Telegram accounts.
+
+    Present if any one of their accounts is in the channel. Absent only if
+    every one of them is explicitly out. If any answer is missing or
+    untrusted, the verdict is UNKNOWN and nothing happens to them.
+    """
+    states = {presence.get(telegram_id, UNKNOWN) for telegram_id in telegram_ids}
+    if PRESENT in states:
+        return PRESENT
+    if states and states == {ABSENT}:
+        return ABSENT
+    return UNKNOWN
+
+
 def decide(
     links_by_user: dict[str, set[str]],
-    participants: set[str] | None,
+    presence: dict[str, str],
     jellyfin_users: dict[str, JellyfinUser],
     states: dict[str, db.UserState],
     now: int,
@@ -50,13 +70,10 @@ def decide(
 ) -> list[Action]:
     """Decide what should happen this cycle.
 
-    ``participants`` is ``None`` when the member list could not be trusted
-    (the threshold guardrail tripped). In that case nothing happens at all --
-    an unreliable fetch must never disable anybody.
+    ``presence`` maps a linked Telegram id to PRESENT, ABSENT or UNKNOWN. An
+    id nobody answered for is UNKNOWN, and an UNKNOWN never costs anyone
+    their access.
     """
-    if participants is None:
-        return []
-
     actions: list[Action] = []
     for jellyfin_user, telegram_ids in links_by_user.items():
         user = jellyfin_users.get(jellyfin_user)
@@ -68,7 +85,7 @@ def decide(
             continue
 
         state = states.get(jellyfin_user, db.UserState())
-        present = bool(telegram_ids & participants)
+        verdict = presence_of(telegram_ids, presence)
 
         if state.disabled_by_us and not user.disabled:
             # Somebody re-enabled the account by hand. Stop claiming it, or a
@@ -77,7 +94,11 @@ def decide(
                 Action(RELEASE, jellyfin_user, user.id, detail="re-enabled outside this service")
             )
 
-        if present:
+        if verdict == UNKNOWN:
+            # Telegram did not give us a trustworthy answer for this person.
+            continue
+
+        if verdict == PRESENT:
             if state.absent_since is not None:
                 actions.append(
                     Action(CLEAR_ABSENT, jellyfin_user, user.id, detail="back in the channel")
