@@ -13,7 +13,7 @@ Every cycle asks the bot about each linked Telegram account in turn, reads what 
 - **Not linked.** The channel rule never touches it. The inactivity rule still does, since that one does not care about Telegram.
 - **Named in `EXEMPT_USERS`.** Never touched by either rule.
 
-`DRY_RUN` is on by default. The messages arrive, the grace clock runs, and no Jellyfin account changes. Leave it on until `/links` looks right. The whole decision is one pure function in [app/sync.py](../app/sync.py), so that list is exactly what the tests enumerate.
+`DRY_RUN` is on by default. The messages arrive, the grace clock runs, and no Jellyfin account changes. Leave it on until `/links` looks right. The whole decision is one pure function in [app/sync.py](https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/app/sync.py), so that list is exactly what the tests enumerate.
 
 ## Second rule: a year without use
 
@@ -44,11 +44,11 @@ The **bot** answers your commands, sends your notifications, and checks membersh
 
 A **user session**, yours as the channel's creator, is still needed for the two things a bot cannot do: listing members to populate `/unknown`, and resolving an `@username` to a numeric id for `/link`.
 
-Both sessions are files in `/app/data`, created once by [app/login.py](../app/login.py).
+Both sessions are files in `/app/data`, created once by [app/login.py](https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/app/login.py).
 
 ## What is stored
 
-Everything is one SQLite file, `/app/data/sync.db`, with four tables defined in [app/db.py](../app/db.py). `links` holds one row per Telegram id. `user_state` records when someone was first seen missing, whether this service disabled them and why. `audit` holds one row per action, dry runs included. `settings` holds the `/dryrun` state and the last sync time.
+Everything is one SQLite file, `/app/data/sync.db`, with four tables defined in [app/db.py](https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/app/db.py). `links` holds one row per Telegram id. `user_state` records when someone was first seen missing, whether this service disabled them and why. `audit` holds one row per action, dry runs included. `settings` holds the `/dryrun` state and the last sync time.
 
 Upgrading from 1.x adds the reason column in place and marks everything 1.x had disabled as having left the channel, which is the only thing it could have meant.
 

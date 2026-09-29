@@ -1,4 +1,6 @@
-# Bot commands
+# Usage
+
+## Bot commands
 
 All of these work only in your private chat with the bot, and only for `OWNER_ID`. Anyone else is ignored without a reply.
 
