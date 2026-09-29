@@ -23,7 +23,7 @@ A daemon, run in Docker, that keeps Jellyfin accounts in step with a private Tel
 
 ## Quick start
 
-You need Telegram API credentials, a bot that is an administrator of the channel, a Jellyfin API key and the channel id ([Getting started](https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/docs/getting-started.md) says where each comes from).
+Run this in an empty folder, with Telegram API credentials, a bot that is an administrator of the channel, a Jellyfin API key and the channel id at hand ([Getting started](https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/docs/getting-started.md) says where each comes from).
 
 ```bash
 curl -O https://raw.githubusercontent.com/GeiserX/jellyfin-telegram-channel-sync/main/docker-compose.yml
