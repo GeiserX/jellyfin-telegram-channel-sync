@@ -8,3 +8,8 @@ venv/
 data/
 *.session
 *.session-journal
+
+# Beads: bead text lives in the Dolt tracker only, never in git
+.beads/issues.jsonl
+.beads/interactions.jsonl
+.beads/events.jsonl
