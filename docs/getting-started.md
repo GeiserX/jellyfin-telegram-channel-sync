@@ -15,7 +15,7 @@
 ```yaml
 services:
   jellytelegram-sync:
-    image: drumsergio/jellyfin-telegram-channel-sync:1.3.0
+    image: drumsergio/jellyfin-telegram-channel-sync:1.3.1
     container_name: jellytelegram-sync
     environment:
       - TELEGRAM_API_ID=your_telegram_api_id
