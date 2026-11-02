@@ -65,7 +65,10 @@ async def run_cycle(ctx: bot.BotContext) -> str:
             continue
         counts[action.kind] = counts.get(action.kind, 0) + 1
         log.info("%s %s (%s)", action.kind, action.jellyfin_user, action.detail)
-        if action.notify:
+        # A dry run changes nothing, so it tells the owner nothing either: the
+        # same "would be disabled" line every hour is noise. The log, the audit
+        # trail and /inactive still show what a real run would do.
+        if action.notify and not dry_run:
             await _notify(ctx, action.notify)
 
     db.set_last_sync(ctx.conn, now)
