@@ -134,7 +134,7 @@ def test_a_returning_member_is_re_enabled_and_announced(harness):
     assert db.get_states(harness.ctx.conn)["examplebravo"] == db.UserState(None, False)
 
 
-def test_a_dry_run_announces_what_would_happen_and_touches_nothing(harness):
+def test_a_dry_run_touches_nothing_and_stays_silent(harness):
     harness.ctx.config.dry_run = True
     db.add_link(harness.ctx.conn, "222", "examplealpha")
     db.set_absent_since(harness.ctx.conn, "examplealpha", NOW - GRACE)
@@ -142,7 +142,7 @@ def test_a_dry_run_announces_what_would_happen_and_touches_nothing(harness):
     summary = cycle(harness)
 
     assert harness.jellyfin.calls == []
-    assert harness.notes == ["examplealpha left ExampleChannel, account would be disabled"]
+    assert harness.notes == []
     assert db.get_states(harness.ctx.conn)["examplealpha"].disabled_by_us is False
     assert "(dry run)" in summary
     assert db.recent_audit(harness.ctx.conn)[0]["dry_run"] == 1
@@ -317,7 +317,7 @@ def test_an_account_with_no_recorded_use_is_counted_not_disabled(harness):
     assert db.get_setting(harness.ctx.conn, "last_no_record") == "1"
 
 
-def test_a_dry_run_reports_the_inactivity_disable_without_making_it(harness):
+def test_a_dry_run_neither_makes_nor_announces_the_inactivity_disable(harness):
     harness.ctx.config.inactive_days = 365
     harness.ctx.config.dry_run = True
     harness.jellyfin.users["examplealpha"] = JellyfinUser(
@@ -327,7 +327,7 @@ def test_a_dry_run_reports_the_inactivity_disable_without_making_it(harness):
     cycle(harness)
 
     assert harness.jellyfin.calls == []
-    assert harness.notes[0].endswith("account would be disabled")
+    assert harness.notes == []
     assert db.get_states(harness.ctx.conn) == {}
 
 

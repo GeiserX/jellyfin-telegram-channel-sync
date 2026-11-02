@@ -13,7 +13,7 @@ Every cycle asks the bot about each linked Telegram account in turn, reads what 
 - **Not linked.** The channel rule never touches it. The inactivity rule still does, since that one does not care about Telegram.
 - **Named in `EXEMPT_USERS`.** Never touched by either rule.
 
-`DRY_RUN` is on by default. The messages arrive, the grace clock runs, and no Jellyfin account changes. Leave it on until `/links` looks right. The whole decision is one pure function in [app/sync.py](https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/app/sync.py), so that list is exactly what the tests enumerate.
+`DRY_RUN` is on by default. The grace clock runs, the log and the audit table record what would happen, and no Jellyfin account changes. No Telegram message is sent for an action that was not made: you hear about an account only once it is really disabled or re-enabled. Errors are still sent in dry run. Leave it on until `/links` looks right. The whole decision is one pure function in [app/sync.py](https://github.com/GeiserX/jellyfin-telegram-channel-sync/blob/main/app/sync.py), so that list is exactly what the tests enumerate.
 
 ## Second rule: a year without use
 
