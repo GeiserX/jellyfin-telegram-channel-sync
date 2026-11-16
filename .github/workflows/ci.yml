@@ -11,8 +11,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.14 is what the image runs; 3.13 is the documented floor.
-        python-version: ["3.13", "3.14"]
+        # 3.15 is what the image runs; 3.13 is the documented floor. 3.14 stays
+        # because the main ruleset requires its check by name.
+        python-version: ["3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

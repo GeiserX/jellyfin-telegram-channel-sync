@@ -4,7 +4,7 @@
 A daemon that keeps Jellyfin accounts in step with a Telegram channel. Members who leave the channel have their Jellyfin account disabled after a grace window; members who come back have it enabled again. The owner assigns the Telegram-to-Jellyfin links from a Telegram bot.
 
 ## Tech Stack
-- Python 3.13. The image runs 3.14 and CI tests both.
+- Python 3.13. The image runs 3.15; CI tests 3.13, 3.14 and 3.15.
 - Telethon, two clients with two session files. The user session lists the channel, the bot talks to the owner.
 - Requests (Jellyfin API)
 - SQLite (stdlib `sqlite3`, no ORM)
